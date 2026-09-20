@@ -1,0 +1,9 @@
+[Unit]
+Description=TTM-Todo Web Push reminders
+After=network.target magictodo.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/Websites/MagicTODO
+EnvironmentFile=/mnt/Websites/MagicTODO/.env
+ExecStart=/mnt/Websites/MagicTODO/.venv/bin/python -m app.push

@@ -1,0 +1,9 @@
+[Unit]
+Description=TTM-Todo Google Tasks and Keep pull
+After=network.target magictodo.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/Websites/MagicTODO
+EnvironmentFile=/mnt/Websites/MagicTODO/.env
+ExecStart=/mnt/Websites/MagicTODO/.venv/bin/python -m app.google_lists

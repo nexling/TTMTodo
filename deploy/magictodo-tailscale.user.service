@@ -1,0 +1,14 @@
+[Unit]
+Description=TTM-Todo Tailscale IP proxy
+After=network.target magictodo.service
+Wants=magictodo.service
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/Websites/MagicTODO
+ExecStart=/mnt/Websites/MagicTODO/.venv/bin/python /mnt/Websites/MagicTODO/scripts/tailscale_proxy.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
