@@ -5,7 +5,7 @@ import { PlanAssigneeSelect, memberLabel } from "../components/PlanAssigneeSelec
 import OrgSidebar from "../components/OrgSidebar";
 import PlanEditorResizeHandle from "../components/PlanEditorResizeHandle";
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
-import { PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
+import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import {
   AttachmentBlock,
   FILE_ACCEPT,
@@ -16,6 +16,7 @@ import {
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
 import { cellInsertBeforeId } from "../planOrder";
+import { projectSpans } from "../planSpan";
 import { useWhoColumnWidth } from "../planWhoWidth";
 import { usePlanView } from "../planWorkload";
 import { useLiveReload } from "../live";
@@ -286,6 +287,27 @@ export default function PlanBoard() {
     for (const list of map.values()) list.sort((a, b) => a.sort_order - b.sort_order);
     return map;
   }, [data, zoom, hideDone, focusDepartmentId]);
+
+  const columnKeys = useMemo(() => columns.map((col) => projectColumnKey(col, zoom)), [columns, zoom]);
+
+  const spansByRow = useMemo(() => {
+    const grouped = new Map<string, PlanTask[]>();
+    for (const task of data?.tasks ?? []) {
+      if (task.parent_id) continue;
+      if (hideDone && task.status === "done") continue;
+      if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
+      const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
+      const list = grouped.get(rowKey) || [];
+      list.push(task);
+      grouped.set(rowKey, list);
+    }
+    const fallback = data?.project.name || "Project";
+    const map = new Map<string, ReturnType<typeof projectSpans>>();
+    for (const [rowKey, tasks] of grouped) {
+      map.set(rowKey, projectSpans(tasks, columnKeys, (due) => projectTaskColumnKey(due, zoom), fallback));
+    }
+    return map;
+  }, [data, zoom, hideDone, focusDepartmentId, columnKeys]);
 
   function cellKey(rowKey: string, col: Date): string {
     return `${rowKey}|${projectColumnKey(col, zoom)}`;
@@ -684,6 +706,7 @@ export default function PlanBoard() {
     : departmentBoardRows(data?.departments ?? [], true);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
   const showBars = planView === "bars" && !pickingDeps;
+  const showProjects = planView === "projects" && !pickingDeps;
 
   return (
     <div className="shell">
@@ -778,7 +801,7 @@ export default function PlanBoard() {
             }
           >
             <div
-              className="plan-grid"
+              className={`plan-grid${showProjects ? " plan-spans" : ""}`}
               style={{
                 ["--weeks" as string]: columns.length,
                 ["--plan-col-min" as string]: zoom === "day" ? "108px" : "148px",
@@ -805,13 +828,15 @@ export default function PlanBoard() {
                   </div>
                 );
               })}
-              {rows.map((row) => {
+              {rows.map((row, rowIndex) => {
                 const rowManage = canManageDept(row.departmentId);
+                const gridRow = rowIndex + 2;
                 return [
                   <div
                     className={`plan-dept${row.person ? " plan-person" : ""}${row.navigable ? " plan-dept-open" : ""}`}
                     key={`d-${row.key}`}
                     style={{
+                      ...(showProjects ? { gridRow, gridColumn: 1 } : null),
                       background: `color-mix(in srgb, ${row.color} ${row.person ? "16%" : "35%"}, var(--bg-raised))`,
                     }}
                     title={row.navigable ? "Open department" : undefined}
@@ -829,15 +854,16 @@ export default function PlanBoard() {
                     <span className="dot" style={{ background: row.color }} />
                     <span className="plan-dept-name">{row.name}</span>
                   </div>,
-                  ...columns.map((col) => {
+                  ...columns.map((col, colIndex) => {
                     const key = cellKey(row.key, col);
                     const tasks = tasksByCell.get(key) || [];
                     return (
                       <div
-                        className={`plan-cell${showBars ? "" : dropKey === key ? " drag-over" : ""}${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
+                        className={`plan-cell${showBars || showProjects ? "" : dropKey === key ? " drag-over" : ""}${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
                         key={key}
+                        style={showProjects ? { gridRow, gridColumn: colIndex + 2 } : undefined}
                         onDragOver={
-                          showBars
+                          showBars || showProjects
                             ? undefined
                             : (e) => {
                                 if (!rowManage || pickingDeps) return;
@@ -847,14 +873,14 @@ export default function PlanBoard() {
                                 setDropChipId(null);
                               }
                         }
-                        onDragLeave={showBars ? undefined : () => setDropKey((cur) => (cur === key ? null : cur))}
+                        onDragLeave={showBars || showProjects ? undefined : () => setDropKey((cur) => (cur === key ? null : cur))}
                         onDrop={
-                          showBars
+                          showBars || showProjects
                             ? undefined
                             : (e) => void onCellDrop(e, row.departmentId, col, undefined, row.assigneeUserId)
                         }
                         onDoubleClick={
-                          showBars
+                          showBars || showProjects
                             ? undefined
                             : () => {
                                 if (!pickingDeps) openNew(row.departmentId, col, row.assigneeUserId);
@@ -863,7 +889,7 @@ export default function PlanBoard() {
                       >
                         {showBars ? (
                           <PlanWorkloadBar count={tasks.length} />
-                        ) : (
+                        ) : showProjects ? null : (
                           <>
                         {tasks.map((task) => (
                           <button
@@ -923,6 +949,14 @@ export default function PlanBoard() {
                       </div>
                     );
                   }),
+                  showProjects ? (
+                    <PlanProjectSpans
+                      key={`spans-${row.key}`}
+                      spans={spansByRow.get(row.key) ?? []}
+                      columnCount={columns.length}
+                      gridRow={gridRow}
+                    />
+                  ) : null,
                 ];
               })}
             </div>

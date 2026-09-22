@@ -987,7 +987,7 @@ export default function Calendar() {
         </Link>
         {showDepartmentWork ? (
           <Link className="bucket-link" to="/org/departments" onClick={() => setMenuOpen(false)}>
-            Department work
+            Org-all Projects
           </Link>
         ) : null}
         {walkBucketTree(buckets).map(({ bucket: b, depth }) => (

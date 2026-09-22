@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Attachment, type Membership, type PlanDepartmentWork, type PlanTask } from "../api";
 import { useLiveReload } from "../live";
@@ -13,24 +13,22 @@ import {
 } from "../components/ItemCard";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
-import { PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
+import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { useWhoColumnWidth } from "../planWhoWidth";
 import { usePlanView } from "../planWorkload";
+import { projectSpans } from "../planSpan";
 import {
-  ZOOM_COUNTS,
   ZOOM_OPTIONS,
-  alignAnchor,
   dayDelta,
   formatChipDay,
   formatProjectHeader,
-  projectColumns,
+  isCurrentPlanColumn,
   projectColumnKey,
+  projectColumnsSpanning,
   projectTaskColumnKey,
   readZoom,
-  stepAnchor,
   taskDueOn,
-  todayAnchor,
   writeZoom,
   ymd,
   type PlanZoom,
@@ -98,7 +96,8 @@ export default function DepartmentWork() {
   const [data, setData] = useState<PlanDepartmentWork | null>(null);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState<PlanZoom>(() => readZoom(ZOOM_KEY));
-  const [anchor, setAnchor] = useState(() => todayAnchor(readZoom(ZOOM_KEY)));
+  const gridWrapRef = useRef<HTMLDivElement>(null);
+  const scrolledKey = useRef<string | null>(null);
   const [editing, setEditing] = useState<PlanTask | null>(null);
   const [draft, setDraft] = useState({
     title: "",
@@ -118,7 +117,6 @@ export default function DepartmentWork() {
   const lead = leadIds.length > 0;
   const admin = Boolean(data?.capabilities.can_manage_project_work || data?.capabilities.can_manage_plan);
   const canManageWork = admin;
-  const colCount = ZOOM_COUNTS[zoom];
 
   function canManageDept(departmentId: string | null | undefined): boolean {
     if (canManageWork) return true;
@@ -140,7 +138,7 @@ export default function DepartmentWork() {
         return next.tasks.find((task) => task.id === cur.id) ?? cur;
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load department work");
+      setError(err instanceof Error ? err.message : "Could not load Org-all Projects");
       setData(null);
     }
   }
@@ -154,7 +152,24 @@ export default function DepartmentWork() {
     () => load(),
   );
 
-  const columns = useMemo(() => projectColumns(anchor, zoom), [anchor, zoom]);
+  const columns = useMemo(() => {
+    const dates: string[] = [];
+    for (const task of data?.tasks ?? []) {
+      if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
+      dates.push(taskDueOn(task));
+    }
+    return projectColumnsSpanning(dates, zoom);
+  }, [data, zoom, focusDepartmentId]);
+
+  useLayoutEffect(() => {
+    const key = `${focusDepartmentId || ""}:${zoom}`;
+    if (scrolledKey.current === key) return;
+    if (!gridWrapRef.current) return;
+    scrolledKey.current = key;
+    if (columns.some((col) => isCurrentPlanColumn(col, zoom))) {
+      scrollPlanHeader(".plan-week.current");
+    }
+  }, [focusDepartmentId, zoom, columns]);
 
   const tasksByCell = useMemo(() => {
     const map = new Map<string, PlanTask[]>();
@@ -170,6 +185,24 @@ export default function DepartmentWork() {
     return map;
   }, [data, zoom, focusDepartmentId]);
 
+  const columnKeys = useMemo(() => columns.map((col) => projectColumnKey(col, zoom)), [columns, zoom]);
+
+  const spansByRow = useMemo(() => {
+    const grouped = new Map<string, PlanTask[]>();
+    for (const task of data?.tasks ?? []) {
+      if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
+      const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
+      const list = grouped.get(rowKey) || [];
+      list.push(task);
+      grouped.set(rowKey, list);
+    }
+    const map = new Map<string, ReturnType<typeof projectSpans>>();
+    for (const [rowKey, tasks] of grouped) {
+      map.set(rowKey, projectSpans(tasks, columnKeys, (due) => projectTaskColumnKey(due, zoom), "Project"));
+    }
+    return map;
+  }, [data, zoom, focusDepartmentId, columnKeys]);
+
   function cellKey(rowKey: string, col: Date): string {
     return `${rowKey}|${projectColumnKey(col, zoom)}`;
   }
@@ -179,10 +212,14 @@ export default function DepartmentWork() {
     navigate(`/org/departments/${id}`);
   }
 
+  function scrollPlanHeader(selector: string) {
+    const target = gridWrapRef.current?.querySelector(selector);
+    if (target instanceof HTMLElement) target.scrollIntoView({ block: "nearest", inline: "center" });
+  }
+
   function changeZoom(next: PlanZoom) {
     setZoom(next);
     writeZoom(ZOOM_KEY, next);
-    setAnchor((cur) => alignAnchor(cur, next));
   }
 
   function startPickingDeps() {
@@ -361,6 +398,7 @@ export default function DepartmentWork() {
     : departmentBoardRows(data?.departments ?? [], canManageWork);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
   const showBars = planView === "bars" && !pickingDeps;
+  const showProjects = planView === "projects" && !pickingDeps;
 
   return (
     <div className="shell">
@@ -372,7 +410,7 @@ export default function DepartmentWork() {
               ←{" "}
               {focusDepartmentId ? (
                 <>
-                  <span className="plan-back-full">Department work</span>
+                  <span className="plan-back-full">Org-all Projects</span>
                   <span className="plan-back-short">Back</span>
                 </>
               ) : (
@@ -382,7 +420,7 @@ export default function DepartmentWork() {
                 </>
               )}
             </Link>
-            <h1>{focusDepartmentId ? focusDept?.name || "Department" : "Department work"}</h1>
+            <h1>{focusDepartmentId ? focusDept?.name || "Department" : "Org-all Projects"}</h1>
             <p className="hint plan-toolbar-lead" style={{ margin: "4px 0 0" }}>
               {focusDepartmentId
                 ? "Tasks in this department, across projects."
@@ -407,14 +445,8 @@ export default function DepartmentWork() {
               ))}
             </div>
             <PlanViewSwitch mode={planView} onChange={setPlanView} />
-            <button className="btn ghost small" type="button" onClick={() => setAnchor(stepAnchor(anchor, zoom, -1))}>
-              ‹ Earlier
-            </button>
-            <button className="btn ghost small" type="button" onClick={() => setAnchor(todayAnchor(zoom))}>
+            <button className="btn ghost small" type="button" onClick={() => scrollPlanHeader(".plan-week.current")}>
               {todayLabel}
-            </button>
-            <button className="btn ghost small" type="button" onClick={() => setAnchor(stepAnchor(anchor, zoom, 1))}>
-              Later ›
             </button>
           </div>
         </div>
@@ -439,9 +471,10 @@ export default function DepartmentWork() {
               : "No departments yet."}
           </p>
         ) : null}
-        {focusMissing ? <p className="error">That department is not in department work.</p> : null}
+        {focusMissing ? <p className="error">That department is not in Org-all Projects.</p> : null}
         {data && !focusMissing && (focusDept || data.departments.length > 0 || canManageWork) ? (
           <div
+            ref={gridWrapRef}
             className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}`}
             style={
               focusDepartmentId && whoColumn.width != null
@@ -450,9 +483,9 @@ export default function DepartmentWork() {
             }
             >
             <div
-              className="plan-grid"
+              className={`plan-grid${showProjects ? " plan-spans" : ""}`}
               style={{
-                ["--weeks" as string]: colCount,
+                ["--weeks" as string]: columns.length,
                 ["--plan-col-min" as string]: zoom === "day" ? "108px" : "148px",
               }}
             >
@@ -465,7 +498,7 @@ export default function DepartmentWork() {
               {columns.map((col, index) => {
                 const meta = formatProjectHeader(col, zoom, index > 0 ? columns[index - 1] : null);
                 return (
-                  <div className="plan-week" key={projectColumnKey(col, zoom)}>
+                  <div className={`plan-week${isCurrentPlanColumn(col, zoom) ? " current" : ""}`} key={projectColumnKey(col, zoom)}>
                     <div className="plan-week-head">
                       <strong>{meta.title}</strong>
                       {meta.year ? <span className="plan-year">{meta.year}</span> : null}
@@ -474,12 +507,14 @@ export default function DepartmentWork() {
                   </div>
                 );
               })}
-              {rows.map((row) => {
+              {rows.map((row, rowIndex) => {
+                const gridRow = rowIndex + 2;
                 return [
                   <div
                     className={`plan-dept${row.person ? " plan-person" : ""}${row.navigable ? " plan-dept-open" : ""}`}
                     key={`d-${row.key}`}
                     style={{
+                      ...(showProjects ? { gridRow, gridColumn: 1 } : null),
                       background: `color-mix(in srgb, ${row.color} ${row.person ? "16%" : "35%"}, var(--bg-raised))`,
                     }}
                     title={row.navigable ? "Open department" : undefined}
@@ -496,14 +531,18 @@ export default function DepartmentWork() {
                     <span className="dot" style={{ background: row.color }} />
                     <span className="plan-dept-name">{row.name}</span>
                   </div>,
-                  ...columns.map((col) => {
+                  ...columns.map((col, colIndex) => {
                     const key = cellKey(row.key, col);
                     const tasks = tasksByCell.get(key) || [];
                     return (
-                      <div className="plan-cell" key={key}>
+                      <div
+                        className={`plan-cell${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
+                        key={key}
+                        style={showProjects ? { gridRow, gridColumn: colIndex + 2 } : undefined}
+                      >
                         {showBars ? (
                           <PlanWorkloadBar count={tasks.length} />
-                        ) : (
+                        ) : showProjects ? null : (
                           tasks.map((task) => {
                           const sameProject = Boolean(editing && task.project_id === editing.project_id);
                           return (
@@ -530,6 +569,14 @@ export default function DepartmentWork() {
                       </div>
                     );
                   }),
+                  showProjects ? (
+                    <PlanProjectSpans
+                      key={`spans-${row.key}`}
+                      spans={spansByRow.get(row.key) ?? []}
+                      columnCount={columns.length}
+                      gridRow={gridRow}
+                    />
+                  ) : null,
                 ];
               })}
             </div>

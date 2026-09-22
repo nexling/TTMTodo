@@ -2053,6 +2053,48 @@ body.who-col-resizing {
   padding: 0 6px;
 }
 
+.plan-grid.plan-spans .plan-cell {
+  min-height: 44px;
+}
+
+.plan-span-layer {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 6px 0;
+  pointer-events: none;
+}
+
+.plan-span-stack {
+  position: relative;
+}
+
+.plan-span {
+  position: absolute;
+  height: 22px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.plan-span span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .plan-chip {
   display: flex;
   flex-direction: column;

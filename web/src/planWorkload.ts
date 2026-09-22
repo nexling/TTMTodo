@@ -1,12 +1,14 @@
 import { useState } from "react";
 
-export type PlanViewMode = "cards" | "bars";
+export type PlanViewMode = "cards" | "bars" | "projects";
 
 const VIEW_KEY = "magictodo:plan-view";
 
 export function readPlanView(): PlanViewMode {
   try {
-    return localStorage.getItem(VIEW_KEY) === "bars" ? "bars" : "cards";
+    const stored = localStorage.getItem(VIEW_KEY);
+    if (stored === "bars" || stored === "projects") return stored;
+    return "cards";
   } catch {
     return "cards";
   }

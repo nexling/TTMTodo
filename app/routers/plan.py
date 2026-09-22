@@ -375,7 +375,7 @@ def department_work(
     lead_ids = user_lead_department_ids(db, org_id, user.id)
     see_all = bool(caps.get("can_manage_project_work") or caps.get("can_manage_plan"))
     if not see_all and not lead_ids:
-        raise HTTPException(status_code=403, detail="Department work is for department leads and organization admins")
+        raise HTTPException(status_code=403, detail="Org-all Projects is for department leads and organization admins")
     mine = user_department_ids(db, org_id, user.id)
     departments = list(
         db.scalars(
