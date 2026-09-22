@@ -126,7 +126,9 @@ function AuthRoutes({
       <Route path="/b/:bucketId" element={<Board />} />
       <Route path="/calendar" element={<Calendar />} />
       <Route path="/org" element={<Org />} />
+      <Route path="/org/departments/:departmentId" element={<DepartmentWork />} />
       <Route path="/org/departments" element={<DepartmentWork />} />
+      <Route path="/org/projects/:projectId/departments/:departmentId" element={<PlanBoard />} />
       <Route path="/org/projects/:projectId" element={<PlanBoard />} />
       <Route path="/org/templates/:templateId" element={<PlanTemplatePage />} />
       <Route

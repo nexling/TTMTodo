@@ -255,7 +255,8 @@ body.sidebar-resizing {
 
 body.sidebar-resizing iframe,
 body.inbox-resizing iframe,
-body.plan-editor-resizing iframe {
+body.plan-editor-resizing iframe,
+body.who-col-resizing iframe {
   pointer-events: none;
 }
 
@@ -1862,6 +1863,29 @@ input.plan-title-input:focus {
   background: var(--bg-raised);
 }
 
+.plan-who-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.plan-who-resize:hover::after,
+.plan-who-resize:focus-visible::after,
+body.who-col-resizing .plan-who-resize::after {
+  background: var(--accent);
+}
+
+body.who-col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .main.plan:has(.plan-editor-resize) .plan-grid-wrap {
   min-height: 160px;
 }
@@ -1897,6 +1921,20 @@ input.plan-title-input:focus {
 .plan-corner {
   left: 0;
   z-index: 3;
+}
+
+.plan-who-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
 }
 
 .plan-week {
@@ -1950,6 +1988,16 @@ input.plan-title-input:focus {
   border-bottom: 1px solid var(--line);
   border-right: 1px solid var(--line);
   font-weight: 600;
+}
+
+.plan-dept-open {
+  cursor: pointer;
+  user-select: none;
+}
+
+.plan-dept.plan-person {
+  padding-left: 28px;
+  font-weight: 500;
 }
 
 .plan-dept-name {

@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Attachment, type Membership, type PlanDepartmentWork, type PlanTask } from "../api";
 import { useLiveReload } from "../live";
 import { PlanAssigneeSelect } from "../components/PlanAssigneeSelect";
@@ -11,7 +11,10 @@ import {
   lightboxFor,
   type Lightbox,
 } from "../components/ItemCard";
+import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
+import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
+import { useWhoColumnWidth } from "../planWhoWidth";
 import {
   ZOOM_COUNTS,
   ZOOM_OPTIONS,
@@ -86,6 +89,9 @@ function undoneFollowingTasks(task: PlanTask, all: PlanTask[]): PlanTask[] {
 }
 
 export default function DepartmentWork() {
+  const { departmentId: focusDepartmentId } = useParams();
+  const navigate = useNavigate();
+  const whoColumn = useWhoColumnWidth();
   const [data, setData] = useState<PlanDepartmentWork | null>(null);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState<PlanZoom>(() => readZoom(ZOOM_KEY));
@@ -104,6 +110,7 @@ export default function DepartmentWork() {
   const { shiftPrompt, shiftBusy, beginShiftFlow, resolveShiftPrompt } = useShiftFlow();
   const [lightbox, setLightbox] = useState<Lightbox | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
+  const [deptMenu, setDeptMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const leadIds = data?.lead_department_ids ?? [];
   const lead = leadIds.length > 0;
   const admin = Boolean(data?.capabilities.can_manage_project_work || data?.capabilities.can_manage_plan);
@@ -149,17 +156,24 @@ export default function DepartmentWork() {
   const tasksByCell = useMemo(() => {
     const map = new Map<string, PlanTask[]>();
     for (const task of data?.tasks ?? []) {
-      const key = `${task.department_id || "none"}|${projectTaskColumnKey(taskDueOn(task), zoom)}`;
+      if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
+      const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
+      const key = `${rowKey}|${projectTaskColumnKey(taskDueOn(task), zoom)}`;
       const list = map.get(key) || [];
       list.push(task);
       map.set(key, list);
     }
     for (const list of map.values()) list.sort((a, b) => a.sort_order - b.sort_order);
     return map;
-  }, [data, zoom]);
+  }, [data, zoom, focusDepartmentId]);
 
-  function cellKey(departmentId: string | null, col: Date): string {
-    return `${departmentId || "none"}|${projectColumnKey(col, zoom)}`;
+  function cellKey(rowKey: string, col: Date): string {
+    return `${rowKey}|${projectColumnKey(col, zoom)}`;
+  }
+
+  function openDepartment(id: string) {
+    if (!id || focusDepartmentId) return;
+    navigate(`/org/departments/${id}`);
   }
 
   function changeZoom(next: PlanZoom) {
@@ -332,12 +346,16 @@ export default function DepartmentWork() {
     }
   }
 
-  const rows = [
-    ...(data?.departments ?? []),
-    ...(canManageWork
-      ? [{ id: "", name: "Unassigned", color: "#3a3428", member_ids: [] as string[], lead_ids: [] as string[] }]
-      : []),
-  ];
+  const focusDept = focusDepartmentId
+    ? (data?.departments ?? []).find((dept) => dept.id === focusDepartmentId) ?? null
+    : null;
+  const focusMissing = Boolean(data && focusDepartmentId && !focusDept);
+  const focusTasks = (data?.tasks ?? []).filter((task) => focusDepartmentId && task.department_id === focusDepartmentId);
+  const rows: PlanGridRow[] = focusDepartmentId
+    ? focusDept
+      ? departmentFocusRows(focusDept, focusTasks, data?.members ?? [])
+      : []
+    : departmentBoardRows(data?.departments ?? [], canManageWork);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
 
   return (
@@ -346,17 +364,29 @@ export default function DepartmentWork() {
       <main className="main plan">
         <div className="main-head plan-toolbar">
           <div>
-            <Link className="hint plan-back" to="/org">
-              ← <span className="plan-back-full">Organization</span>
-              <span className="plan-back-short">Org</span>
+            <Link className="hint plan-back" to={focusDepartmentId ? "/org/departments" : "/org"}>
+              ←{" "}
+              {focusDepartmentId ? (
+                <>
+                  <span className="plan-back-full">Department work</span>
+                  <span className="plan-back-short">Back</span>
+                </>
+              ) : (
+                <>
+                  <span className="plan-back-full">Organization</span>
+                  <span className="plan-back-short">Org</span>
+                </>
+              )}
             </Link>
-            <h1>Department work</h1>
+            <h1>{focusDepartmentId ? focusDept?.name || "Department" : "Department work"}</h1>
             <p className="hint plan-toolbar-lead" style={{ margin: "4px 0 0" }}>
-              {admin
-                ? "Open tasks for every department, across projects."
-                : lead
-                  ? "Open tasks for the departments you lead, across every project."
-                  : "Department leads see every task in their departments here."}
+              {focusDepartmentId
+                ? "Tasks in this department, across projects."
+                : admin
+                  ? "Open tasks for every department, across projects."
+                  : lead
+                    ? "Open tasks for the departments you lead, across every project."
+                    : "Department leads see every task in their departments here."}
             </p>
           </div>
           <div className="composer-row">
@@ -397,15 +427,23 @@ export default function DepartmentWork() {
           />
         ) : null}
         {!data && !error ? <p className="hint">Loading…</p> : null}
-        {data && data.departments.length === 0 && !canManageWork ? (
+        {data && !focusDepartmentId && data.departments.length === 0 && !canManageWork ? (
           <p className="hint">
             {lead
               ? "You are not marked as lead of a department yet. Ask an admin to assign you."
               : "No departments yet."}
           </p>
         ) : null}
-        {data && (data.departments.length > 0 || canManageWork) ? (
-          <div className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}`}>
+        {focusMissing ? <p className="error">That department is not in department work.</p> : null}
+        {data && !focusMissing && (focusDept || data.departments.length > 0 || canManageWork) ? (
+          <div
+            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}`}
+            style={
+              focusDepartmentId && whoColumn.width != null
+                ? { ["--plan-dept-col" as string]: `${whoColumn.width}px` }
+                : undefined
+            }
+            >
             <div
               className="plan-grid"
               style={{
@@ -414,7 +452,10 @@ export default function DepartmentWork() {
               }}
             >
               <div className="plan-corner">
-                <span className="plan-corner-label">Department</span>
+                <span className="plan-corner-label">{focusDepartmentId ? "Who" : "Department"}</span>
+                {focusDepartmentId ? (
+                  <PlanWhoResizeHandle width={whoColumn.width} onCommit={whoColumn.commit} onReset={whoColumn.reset} />
+                ) : null}
               </div>
               {columns.map((col, index) => {
                 const meta = formatProjectHeader(col, zoom, index > 0 ? columns[index - 1] : null);
@@ -428,19 +469,30 @@ export default function DepartmentWork() {
                   </div>
                 );
               })}
-              {rows.map((dept) => {
-                const deptId = dept.id || null;
+              {rows.map((row) => {
                 return [
                   <div
-                    className="plan-dept"
-                    key={`d-${dept.id || "none"}`}
-                    style={{ background: `color-mix(in srgb, ${dept.color} 35%, var(--bg-raised))` }}
+                    className={`plan-dept${row.person ? " plan-person" : ""}${row.navigable ? " plan-dept-open" : ""}`}
+                    key={`d-${row.key}`}
+                    style={{
+                      background: `color-mix(in srgb, ${row.color} ${row.person ? "16%" : "35%"}, var(--bg-raised))`,
+                    }}
+                    title={row.navigable ? "Open department" : undefined}
+                    onDoubleClick={() => {
+                      if (row.navigable && row.departmentId) openDepartment(row.departmentId);
+                    }}
+                    onContextMenu={(e) => {
+                      if (!row.navigable || !row.departmentId) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDeptMenu({ id: row.departmentId, x: e.clientX, y: e.clientY });
+                    }}
                   >
-                    <span className="dot" style={{ background: dept.color }} />
-                    <span className="plan-dept-name">{dept.name}</span>
+                    <span className="dot" style={{ background: row.color }} />
+                    <span className="plan-dept-name">{row.name}</span>
                   </div>,
                   ...columns.map((col) => {
-                    const key = cellKey(deptId, col);
+                    const key = cellKey(row.key, col);
                     const tasks = tasksByCell.get(key) || [];
                     return (
                       <div className="plan-cell" key={key}>
@@ -451,7 +503,7 @@ export default function DepartmentWork() {
                               key={task.id}
                               type="button"
                               className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${pickingDeps && sameProject && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editing?.id ? " dep-source" : ""}`}
-                              style={{ background: `color-mix(in srgb, ${dept.color} 28%, var(--bg-card))` }}
+                              style={{ background: `color-mix(in srgb, ${row.color} 28%, var(--bg-card))` }}
                               onClick={() => openEdit(task)}
                             >
                               <span className="plan-chip-who">{task.project_name || "Project"}</span>
@@ -651,6 +703,7 @@ export default function DepartmentWork() {
           </div>
         ) : null}
         {lightbox ? <LightboxOverlay lightbox={lightbox} onClose={() => setLightbox(null)} /> : null}
+        <DepartmentViewMenu menu={deptMenu} onOpen={openDepartment} onClose={() => setDeptMenu(null)} />
       </main>
     </div>
   );

@@ -8,11 +8,15 @@ export function cellInsertBeforeId<T>(opts: {
   deptOf: (item: T) => string | null | undefined;
   sortOf: (item: T) => number;
   columnOf: (item: T) => string | number;
+  assigneeOf?: (item: T) => string | null | undefined;
+  assigneeUserId?: string | null;
 }): string | null {
-  const { items, draggedId, departmentId, column, dropOnId, idOf, deptOf, sortOf, columnOf } = opts;
+  const { items, draggedId, departmentId, column, dropOnId, idOf, deptOf, sortOf, columnOf, assigneeOf, assigneeUserId } =
+    opts;
   if (dropOnId && dropOnId !== draggedId) return dropOnId;
   const dept = items
     .filter((item) => idOf(item) !== draggedId && (deptOf(item) || null) === (departmentId || null))
+    .filter((item) => !assigneeOf || (assigneeOf(item) || null) === (assigneeUserId || null))
     .sort((a, b) => sortOf(a) - sortOf(b) || idOf(a).localeCompare(idOf(b)));
   const inCell = dept.filter((item) => columnOf(item) === column);
   const last = inCell[inCell.length - 1];
