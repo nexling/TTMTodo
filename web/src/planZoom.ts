@@ -52,7 +52,11 @@ export function isoWeekMeta(monday: Date): { year: number; week: number; label: 
   const year = thursday.getFullYear();
   const jan4 = new Date(year, 0, 4);
   const week1 = startOfISOWeek(jan4);
-  const week = Math.floor((monday.getTime() - week1.getTime()) / (7 * 86400000)) + 1;
+  const days =
+    (Date.UTC(monday.getFullYear(), monday.getMonth(), monday.getDate()) -
+      Date.UTC(week1.getFullYear(), week1.getMonth(), week1.getDate())) /
+    86400000;
+  const week = days / 7 + 1;
   return { year, week, label: `W${week}` };
 }
 

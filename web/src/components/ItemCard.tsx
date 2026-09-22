@@ -1,6 +1,7 @@
-import { type DragEvent, type KeyboardEvent, type MouseEvent, type TextareaHTMLAttributes, useLayoutEffect, useRef, useEffect, useState } from "react";
+import { type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent, type TextareaHTMLAttributes, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { type Attachment, type Bucket, type Item } from "../api";
 import { bucketOptionLabel, walkBucketTree } from "../bucketTree";
+import { filesFromDataTransfer } from "../clipboardFiles";
 import { formatRichText } from "../linkify";
 
 function fitTextarea(el: HTMLTextAreaElement | null, extraRows = 1) {
@@ -651,6 +652,14 @@ function ItemCard({
     </>
   );
 
+  function onEditPaste(e: ClipboardEvent<HTMLElement>) {
+    if (!editing) return;
+    const incoming = filesFromDataTransfer(e.clipboardData);
+    if (!incoming.length) return;
+    e.preventDefault();
+    onAttach(item, incoming);
+  }
+
   return (
     <article
       id={`item-${item.id}`}
@@ -663,6 +672,7 @@ function ItemCard({
       onDragOver={(e) => onCardDragOver(e, item)}
       onDragLeave={(e) => onCardDragLeave(e, item)}
       onDrop={(e) => onCardDrop(e, item)}
+      onPaste={(e) => onEditPaste(e)}
       onContextMenu={(e) => {
         const el = e.target as HTMLElement | null;
         if (el?.closest?.(CONTEXT_SKIP_SEL)) return;

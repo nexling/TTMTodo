@@ -10,7 +10,7 @@ import {
 } from "../api";
 import ColorPicker, { COLOR_PALETTE } from "../components/ColorPicker";
 import OrgSidebar from "../components/OrgSidebar";
-import type { ScheduleDirection } from "../planZoom";
+import { isoWeekMeta, startOfISOWeek, type ScheduleDirection } from "../planZoom";
 
 function memberLabel(row: Membership): string {
   const user = row.user;
@@ -18,19 +18,8 @@ function memberLabel(row: Membership): string {
 }
 
 function currentWeekValue(): string {
-  const now = new Date();
-  const day = (now.getDay() + 6) % 7;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - day);
-  const thursday = new Date(monday);
-  thursday.setDate(monday.getDate() + 3);
-  const year = thursday.getFullYear();
-  const jan4 = new Date(year, 0, 4);
-  const jan4Day = (jan4.getDay() + 6) % 7;
-  const week1 = new Date(jan4);
-  week1.setDate(jan4.getDate() - jan4Day);
-  const week = Math.floor((monday.getTime() - week1.getTime()) / (7 * 86400000)) + 1;
-  return `${year}-W${String(week).padStart(2, "0")}`;
+  const meta = isoWeekMeta(startOfISOWeek(new Date()));
+  return `${meta.year}-W${String(meta.week).padStart(2, "0")}`;
 }
 
 function currentDateValue(): string {
