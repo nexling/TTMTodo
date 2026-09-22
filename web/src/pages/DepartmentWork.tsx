@@ -13,8 +13,10 @@ import {
 } from "../components/ItemCard";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
+import { PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { useWhoColumnWidth } from "../planWhoWidth";
+import { usePlanView } from "../planWorkload";
 import {
   ZOOM_COUNTS,
   ZOOM_OPTIONS,
@@ -92,6 +94,7 @@ export default function DepartmentWork() {
   const { departmentId: focusDepartmentId } = useParams();
   const navigate = useNavigate();
   const whoColumn = useWhoColumnWidth();
+  const [planView, setPlanView] = usePlanView();
   const [data, setData] = useState<PlanDepartmentWork | null>(null);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState<PlanZoom>(() => readZoom(ZOOM_KEY));
@@ -357,6 +360,7 @@ export default function DepartmentWork() {
       : []
     : departmentBoardRows(data?.departments ?? [], canManageWork);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
+  const showBars = planView === "bars" && !pickingDeps;
 
   return (
     <div className="shell">
@@ -402,6 +406,7 @@ export default function DepartmentWork() {
                 </button>
               ))}
             </div>
+            <PlanViewSwitch mode={planView} onChange={setPlanView} />
             <button className="btn ghost small" type="button" onClick={() => setAnchor(stepAnchor(anchor, zoom, -1))}>
               ‹ Earlier
             </button>
@@ -496,7 +501,10 @@ export default function DepartmentWork() {
                     const tasks = tasksByCell.get(key) || [];
                     return (
                       <div className="plan-cell" key={key}>
-                        {tasks.map((task) => {
+                        {showBars ? (
+                          <PlanWorkloadBar count={tasks.length} />
+                        ) : (
+                          tasks.map((task) => {
                           const sameProject = Boolean(editing && task.project_id === editing.project_id);
                           return (
                             <button
@@ -517,7 +525,8 @@ export default function DepartmentWork() {
                               {task.blocked ? <span className="hint">Waiting</span> : null}
                             </button>
                           );
-                        })}
+                        })
+                        )}
                       </div>
                     );
                   }),

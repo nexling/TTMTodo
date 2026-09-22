@@ -5,6 +5,7 @@ import { PlanAssigneeSelect, memberLabel } from "../components/PlanAssigneeSelec
 import OrgSidebar from "../components/OrgSidebar";
 import PlanEditorResizeHandle from "../components/PlanEditorResizeHandle";
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
+import { PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import {
   AttachmentBlock,
   FILE_ACCEPT,
@@ -16,6 +17,7 @@ import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDial
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
 import { cellInsertBeforeId } from "../planOrder";
 import { useWhoColumnWidth } from "../planWhoWidth";
+import { usePlanView } from "../planWorkload";
 import { useLiveReload } from "../live";
 import {
   ZOOM_OPTIONS,
@@ -147,6 +149,7 @@ export default function PlanBoard() {
   const { projectId, departmentId: focusDepartmentId } = useParams();
   const navigate = useNavigate();
   const whoColumn = useWhoColumnWidth();
+  const [planView, setPlanView] = usePlanView();
   const [data, setData] = useState<PlanBoardData | null>(null);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState<PlanZoom>(() => readZoom(ZOOM_KEY));
@@ -680,6 +683,7 @@ export default function PlanBoard() {
       : []
     : departmentBoardRows(data?.departments ?? [], true);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
+  const showBars = planView === "bars" && !pickingDeps;
 
   return (
     <div className="shell">
@@ -729,6 +733,7 @@ export default function PlanBoard() {
                 </button>
               ))}
             </div>
+            <PlanViewSwitch mode={planView} onChange={setPlanView} />
             <label className="toggle">
               <input
                 type="checkbox"
@@ -829,21 +834,37 @@ export default function PlanBoard() {
                     const tasks = tasksByCell.get(key) || [];
                     return (
                       <div
-                        className={`plan-cell${dropKey === key ? " drag-over" : ""}${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
+                        className={`plan-cell${showBars ? "" : dropKey === key ? " drag-over" : ""}${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
                         key={key}
-                        onDragOver={(e) => {
-                          if (!rowManage || pickingDeps) return;
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = "move";
-                          setDropKey(key);
-                          setDropChipId(null);
-                        }}
-                        onDragLeave={() => setDropKey((cur) => (cur === key ? null : cur))}
-                        onDrop={(e) => void onCellDrop(e, row.departmentId, col, undefined, row.assigneeUserId)}
-                        onDoubleClick={() => {
-                          if (!pickingDeps) openNew(row.departmentId, col, row.assigneeUserId);
-                        }}
+                        onDragOver={
+                          showBars
+                            ? undefined
+                            : (e) => {
+                                if (!rowManage || pickingDeps) return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "move";
+                                setDropKey(key);
+                                setDropChipId(null);
+                              }
+                        }
+                        onDragLeave={showBars ? undefined : () => setDropKey((cur) => (cur === key ? null : cur))}
+                        onDrop={
+                          showBars
+                            ? undefined
+                            : (e) => void onCellDrop(e, row.departmentId, col, undefined, row.assigneeUserId)
+                        }
+                        onDoubleClick={
+                          showBars
+                            ? undefined
+                            : () => {
+                                if (!pickingDeps) openNew(row.departmentId, col, row.assigneeUserId);
+                              }
+                        }
                       >
+                        {showBars ? (
+                          <PlanWorkloadBar count={tasks.length} />
+                        ) : (
+                          <>
                         {tasks.map((task) => (
                           <button
                             key={task.id}
@@ -897,6 +918,8 @@ export default function PlanBoard() {
                             +
                           </button>
                         ) : null}
+                          </>
+                        )}
                       </div>
                     );
                   }),
