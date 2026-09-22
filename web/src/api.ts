@@ -179,6 +179,15 @@ export type PlanOverview = {
   lead_department_ids?: string[];
 };
 
+export type PlanMyTodos = {
+  capabilities: Membership["capabilities"];
+  lead_department_ids: string[];
+  viewer_id: string;
+  members: Membership[];
+  departments: PlanDepartment[];
+  tasks: PlanTask[];
+};
+
 export type PlanDepartmentWork = {
   capabilities: Membership["capabilities"];
   my_department_ids: string[];
@@ -717,6 +726,8 @@ export const api = {
       body: JSON.stringify({ department_ids, lead_ids }),
     }),
   departmentWork: () => request<PlanDepartmentWork>("/api/plan/department-work"),
+  myTodos: (scope: "mine" | "people" | "department") =>
+    request<PlanMyTodos>(`/api/plan/my-todos?scope=${scope}`),
   createPlanTemplate: (name: string) =>
     request<PlanTemplate>("/api/plan/templates", {
       method: "POST",

@@ -7,6 +7,7 @@ import Calendar from "./pages/Calendar";
 import Gate from "./pages/Gate";
 import Org from "./pages/Org";
 import DepartmentWork from "./pages/DepartmentWork";
+import MyOrgTodos from "./pages/MyOrgTodos";
 import PlanBoard from "./pages/PlanBoard";
 import PlanTemplatePage from "./pages/PlanTemplate";
 import Settings from "./pages/Settings";
@@ -128,6 +129,7 @@ function AuthRoutes({
       <Route path="/org" element={<Org />} />
       <Route path="/org/departments/:departmentId" element={<DepartmentWork />} />
       <Route path="/org/departments" element={<DepartmentWork />} />
+      <Route path="/org/my-todos" element={<MyOrgTodos />} />
       <Route path="/org/projects/:projectId/departments/:departmentId" element={<PlanBoard />} />
       <Route path="/org/projects/:projectId" element={<PlanBoard />} />
       <Route path="/org/templates/:templateId" element={<PlanTemplatePage />} />

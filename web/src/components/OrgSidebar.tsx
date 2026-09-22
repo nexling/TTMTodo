@@ -5,7 +5,7 @@ import { useDepartmentWorkNav } from "../planAccess";
 export default function OrgSidebar({
   active,
 }: {
-  active: "org" | "project" | "template" | "department";
+  active: "org" | "project" | "template" | "department" | "todos";
 }) {
   const showDepartmentWork = useDepartmentWorkNav();
   return (
@@ -35,6 +35,9 @@ export default function OrgSidebar({
           Org: All Projects
         </Link>
       ) : null}
+      <Link className={`bucket-link${active === "todos" ? " active" : ""}`} to="/org/my-todos">
+        My Org Todo's
+      </Link>
       <div className="sidebar-foot">
         <Link className="nav-btn" to="/settings">
           Settings

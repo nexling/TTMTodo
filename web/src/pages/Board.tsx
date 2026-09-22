@@ -1480,6 +1480,9 @@ export default function Board() {
             Org: All Projects
           </Link>
         ) : null}
+        <Link className="bucket-link" to="/org/my-todos" onClick={() => setMenuOpen(false)}>
+          My Org Todo's
+        </Link>
         {sidebarBuckets.map(({ bucket: b, depth, hasChildren }) =>
           renamingId === b.id ? (
             <form

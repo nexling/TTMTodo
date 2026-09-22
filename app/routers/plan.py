@@ -1,7 +1,7 @@
 from datetime import datetime
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -419,6 +419,76 @@ def department_work(
         "members": org_members(db, org_id),
         "departments": [serialize_department(dept) for dept in visible],
         "projects": [serialize_project(project) for project in projects],
+        "tasks": [
+            serialize_task(
+                db,
+                task,
+                user=user,
+                org_id=org_id,
+                capabilities=caps,
+                project_name=project_names.get(task.project_id),
+            )
+            for task in tasks
+        ],
+    }
+
+
+@router.get("/my-todos")
+def my_todos(
+    request: Request,
+    scope: str = Query(default="mine"),
+    user: User = Depends(require_licensed),
+    db: Session = Depends(get_db),
+):
+    if scope not in {"mine", "people", "department"}:
+        raise HTTPException(status_code=400, detail="Unknown scope")
+    ctx = _org(request, user, db)
+    caps = ctx["capabilities"]
+    org_id = ctx["org_id"]
+    lead_ids = user_lead_department_ids(db, org_id, user.id)
+    can_see_people = bool(caps.get("can_manage_project_work") or caps.get("can_manage_plan"))
+    if scope == "people" and not can_see_people:
+        raise HTTPException(status_code=403, detail="All people is for organization admins and project managers")
+    if scope == "department" and not lead_ids and not can_see_people:
+        raise HTTPException(status_code=403, detail="My department is for department leads")
+    departments = list(
+        db.scalars(
+            select(Department)
+            .options(selectinload(Department.members))
+            .where(Department.organization_id == org_id)
+            .order_by(Department.sort_order, Department.name)
+        ).all()
+    )
+    projects = list(
+        db.scalars(
+            select(PlanProject)
+            .where(PlanProject.organization_id == org_id)
+            .order_by(PlanProject.name, PlanProject.created_at.desc())
+        ).all()
+    )
+    project_names = {row.id: row.name for row in projects}
+    tasks: list[PlanTask] = []
+    if scope != "department" or lead_ids:
+        tasks_query = (
+            select(PlanTask)
+            .join(PlanProject, PlanProject.id == PlanTask.project_id)
+            .where(
+                PlanProject.organization_id == org_id,
+                PlanTask.assignee_user_id.is_not(None),
+            )
+            .order_by(PlanTask.week_start, PlanTask.sort_order, PlanTask.title)
+        )
+        if scope == "mine":
+            tasks_query = tasks_query.where(PlanTask.assignee_user_id == user.id)
+        elif scope == "department":
+            tasks_query = tasks_query.where(PlanTask.department_id.in_(lead_ids))
+        tasks = list(db.scalars(tasks_query).all())
+    return {
+        "capabilities": caps,
+        "lead_department_ids": sorted(lead_ids),
+        "viewer_id": user.id,
+        "members": org_members(db, org_id),
+        "departments": [serialize_department(dept) for dept in departments],
         "tasks": [
             serialize_task(
                 db,
