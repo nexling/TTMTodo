@@ -1,18 +1,12 @@
 import { type DragEvent, type FormEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type Attachment, type Membership, type PlanBoard as PlanBoardData, type PlanSubtask, type PlanTask } from "../api";
-import { PlanAssigneeSelect, memberLabel } from "../components/PlanAssigneeSelect";
+import { api, type Membership, type PlanBoard as PlanBoardData, type PlanSubtask, type PlanTask } from "../api";
+import { memberLabel } from "../components/PlanAssigneeSelect";
 import OrgSidebar from "../components/OrgSidebar";
-import PlanEditorResizeHandle from "../components/PlanEditorResizeHandle";
+import PlanTaskEditor, { notifyDaysInput, parseNotifyDays } from "../components/PlanTaskEditor";
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
 import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
-import {
-  AttachmentBlock,
-  FILE_ACCEPT,
-  LightboxOverlay,
-  lightboxFor,
-  type Lightbox,
-} from "../components/ItemCard";
+import { LightboxOverlay, lightboxFor, type Lightbox } from "../components/ItemCard";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
 import { cellInsertBeforeId } from "../planOrder";
@@ -59,19 +53,6 @@ function writeHideDone(projectId: string, hide: boolean): void {
   } catch {
     /* ignore */
   }
-}
-
-function parseNotifyDays(raw: string): number | null | "invalid" {
-  const text = raw.trim();
-  if (!text) return null;
-  if (!/^\d+$/.test(text)) return "invalid";
-  const n = Number(text);
-  if (n > 365) return "invalid";
-  return n;
-}
-
-function notifyDaysInput(value: number | null | undefined): string {
-  return value == null ? "" : String(value);
 }
 
 function ProgressBadge({ percent }: { percent: number }) {
@@ -296,10 +277,21 @@ export default function PlanBoard() {
       if (task.parent_id) continue;
       if (hideDone && task.status === "done") continue;
       if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
-      const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
-      const list = grouped.get(rowKey) || [];
-      list.push(task);
-      grouped.set(rowKey, list);
+      if (focusDepartmentId) {
+        const dept = grouped.get("dept") || [];
+        dept.push(task);
+        grouped.set("dept", dept);
+        if (task.assignee_user_id) {
+          const people = grouped.get(task.assignee_user_id) || [];
+          people.push(task);
+          grouped.set(task.assignee_user_id, people);
+        }
+      } else {
+        const rowKey = task.department_id || "none";
+        const list = grouped.get(rowKey) || [];
+        list.push(task);
+        grouped.set(rowKey, list);
+      }
     }
     const fallback = data?.project.name || "Project";
     const map = new Map<string, ReturnType<typeof projectSpans>>();
@@ -963,296 +955,50 @@ export default function PlanBoard() {
           </div>
         )}
 
-        {editing ? <PlanEditorResizeHandle /> : null}
-
-        {editing && pickingDeps ? (
-          <div className="plan-editor plan-dep-picker">
-            <div className="panel">
-              <h2>Assign depending tasks</h2>
-              <p className="hint">
-                Click one or more other tasks on the board. Those become the tasks this one depends on.
-              </p>
-              <p>
-                Selected: {draft.predecessor_ids.length}{" "}
-                {draft.predecessor_ids.length === 1 ? "task" : "tasks"}
-                {selectedDepTasks().length
-                  ? ` — ${selectedDepTasks()
-                      .map((task) => task.title)
-                      .join(", ")}`
-                  : ""}
-              </p>
-              <div className="composer-row">
-                <button className="btn" type="button" onClick={confirmPickedDeps}>
-                  Confirm
-                </button>
-                <button className="btn ghost" type="button" onClick={cancelPickedDeps}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : editing ? (
-          <div className="plan-editor">
-            {(() => {
-                const canEdit = editing === "new" ? canManageDept(draft.department_id || null) : canManageTask(editing);
-                const isChild = editing !== "new" && Boolean(editing.parent_id);
-                const showSubtasks = editing !== "new" && !editing.parent_id;
-                const deptOptions = canManageWork
-                  ? data?.departments ?? []
-                  : (data?.departments ?? []).filter((dept) => leadIds.includes(dept.id) || dept.id === draft.department_id);
-                const attachments = editing === "new" ? [] : editing.attachments ?? [];
-                const deptMemberIds =
-                  data?.departments.find((dept) => dept.id === draft.department_id)?.member_ids ?? [];
-                const children = showSubtasks ? editing.subtasks ?? [] : [];
-                return (
-            <div className={`plan-editor-layout${showSubtasks ? " has-subtasks" : ""}`}>
-            <form className="panel" onSubmit={(e) => void saveTask(e)}>
-              <div className="plan-editor-head">
-                <h2>{editing === "new" ? "New task" : isChild ? "Subtask" : "Task"}</h2>
-                <div className="composer-row">
-                  {editing !== "new" && (editing.can_complete || editing.status === "done") ? (
-                    <button className="btn" type="button" onClick={() => void toggleTask(editing)}>
-                      {editing.status === "done" ? "Reopen" : "Mark done"}
-                    </button>
-                  ) : null}
-                  {canEdit ? (
-                    <button className="btn" type="submit">
-                      Save
-                    </button>
-                  ) : null}
-                  {canEdit && editing !== "new" ? (
-                    <button className="btn ghost" type="button" onClick={() => void removeTask(editing)}>
-                      Delete
-                    </button>
-                  ) : null}
-                  <button className="btn ghost" type="button" onClick={closeEditor}>
-                    Close
-                  </button>
-                </div>
-              </div>
-              <label>
-                Title
-                <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} required maxLength={500} disabled={!canEdit} />
-              </label>
-              <label>
-                Notes
-                <textarea value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} rows={3} disabled={!canEdit} />
-              </label>
-              {canEdit ? (
-                <div className={`plan-editor-row${isChild ? " single" : ""}`}>
-                  {isChild ? null : (
-                    <label>
-                      Department
-                      <select
-                        value={draft.department_id}
-                        onChange={(e) => setDraft({ ...draft, department_id: e.target.value })}
-                      >
-                        {canManageWork ? <option value="">Unassigned</option> : null}
-                        {deptOptions.map((dept) => (
-                          <option key={dept.id} value={dept.id}>
-                            {dept.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <label>
-                    Assigned to
-                    <PlanAssigneeSelect
-                      value={draft.assignee_user_id}
-                      onChange={(userId) => setDraft({ ...draft, assignee_user_id: userId })}
-                      members={data?.members ?? []}
-                      departmentMemberIds={deptMemberIds}
-                    />
-                  </label>
-                </div>
-              ) : null}
-              {canEdit && !isChild ? (
-                <>
-                  <div className="plan-editor-row">
-                    <label>
-                      Date
-                      <input
-                        type="date"
-                        value={draft.due_on}
-                        onChange={(e) => setDraft({ ...draft, due_on: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      Notify days before due
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="off"
-                        value={draft.notify_days}
-                        aria-label="Days before due to email"
-                        onChange={(e) => setDraft({ ...draft, notify_days: e.target.value })}
-                      />
-                    </label>
-                  </div>
-                  <p className="hint">Assignee, or department leads if unassigned, get the email.</p>
-                </>
-              ) : null}
-              {canEdit && !isChild ? (
-                <div className="plan-editor-row">
-                  <div className="plan-dep-field">
-                    <span>Depends on</span>
-                    {selectedDepTasks().length ? (
-                      <ul className="plan-dep-list">
-                        {selectedDepTasks().map((task) => (
-                          <li key={task.id}>{task.title}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="hint">No depending tasks yet.</p>
-                    )}
-                    <button className="btn" type="button" onClick={startPickingDeps}>
-                      Assign depending tasks
-                    </button>
-                  </div>
-                  {editing !== "new" ? (
-                    <div className="plan-dep-field">
-                      <span>Attachments</span>
-                      {attachments.length ? (
-                        <div className="thumbs">
-                          {attachments.map((att: Attachment) => (
-                            <AttachmentBlock
-                              key={att.id}
-                              att={att}
-                              onOpen={(file) => setLightbox(lightboxFor(file))}
-                              onRemove={() => void detachFromTask(editing, att.id)}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="hint">No files yet.</p>
-                      )}
-                      <label className="btn ghost small file-btn">
-                        {attachBusy ? "Adding…" : "Attach"}
-                        <input
-                          type="file"
-                          multiple
-                          accept={FILE_ACCEPT}
-                          disabled={attachBusy}
-                          onChange={(e) => {
-                            const chosen = e.target.files;
-                            if (chosen?.length) void attachToTask(editing, Array.from(chosen));
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    </div>
-                  ) : (
-                    <p className="hint">Save the task to add attachments.</p>
-                  )}
-                </div>
-              ) : editing !== "new" ? (
-                <div className="plan-dep-field">
-                  <span>Attachments</span>
-                  {attachments.length ? (
-                    <div className="thumbs">
-                      {attachments.map((att: Attachment) => (
-                        <AttachmentBlock
-                          key={att.id}
-                          att={att}
-                          onOpen={(file) => setLightbox(lightboxFor(file))}
-                          onRemove={canEdit ? () => void detachFromTask(editing, att.id) : undefined}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="hint">No files yet.</p>
-                  )}
-                  {canEdit ? (
-                    <label className="btn ghost small file-btn">
-                      {attachBusy ? "Adding…" : "Attach"}
-                      <input
-                        type="file"
-                        multiple
-                        accept={FILE_ACCEPT}
-                        disabled={attachBusy}
-                        onChange={(e) => {
-                          const chosen = e.target.files;
-                          if (chosen?.length) void attachToTask(editing, Array.from(chosen));
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="hint">Save the task to add attachments.</p>
-              )}
-            </form>
-            {showSubtasks ? (
-              <div className="panel plan-subtasks">
-                <h2>Subtasks</h2>
-                {children.length ? (
-                  <ul className="plan-subtask-list">
-                    {children.map((child) => (
-                      <li key={child.id}>
-                        <button
-                          type="button"
-                          className={`plan-subtask-row${child.status === "done" ? " done" : ""}`}
-                          onClick={() => {
-                            const full = data?.tasks.find((row) => row.id === child.id);
-                            if (full) openEdit(full);
-                          }}
-                        >
-                          <span className="plan-subtask-title">{child.title}</span>
-                          <span className="hint">
-                            {child.assignee
-                              ? memberLabel({ user: child.assignee, user_id: child.assignee.id } as Membership)
-                              : "Nobody yet"}
-                          </span>
-                          <span className="hint">{child.status === "done" ? "Done" : "Open"}</span>
-                        </button>
-                        {child.status === "done" || child.can_complete ? (
-                          <button
-                            className="btn ghost small"
-                            type="button"
-                            onClick={() => void toggleSubtask(child)}
-                          >
-                            {child.status === "done" ? "Reopen" : "Done"}
-                          </button>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="hint">No subtasks yet.</p>
-                )}
-                {canEdit ? (
-                  <div className="plan-subtask-add">
-                    <input
-                      value={subtaskDraft.title}
-                      onChange={(e) => setSubtaskDraft({ ...subtaskDraft, title: e.target.value })}
-                      placeholder="Add subtask"
-                      maxLength={500}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void submitSubtask();
-                        }
-                      }}
-                    />
-                    <PlanAssigneeSelect
-                      value={subtaskDraft.assignee_user_id}
-                      onChange={(userId) => setSubtaskDraft({ ...subtaskDraft, assignee_user_id: userId })}
-                      members={data?.members ?? []}
-                      departmentMemberIds={deptMemberIds}
-                    />
-                    <button className="btn" type="button" onClick={() => void submitSubtask()}>
-                      Add
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            </div>
-                );
-              })()}
-          </div>
+        {editing ? (
+          <PlanTaskEditor
+            editing={editing}
+            pickingDeps={pickingDeps}
+            draft={draft}
+            onDraftChange={setDraft}
+            canEdit={editing === "new" ? canManageDept(draft.department_id || null) : canManageTask(editing)}
+            departments={
+              canManageWork
+                ? data?.departments ?? []
+                : (data?.departments ?? []).filter((dept) => leadIds.includes(dept.id) || dept.id === draft.department_id)
+            }
+            allowUnassigned={canManageWork}
+            members={data?.members ?? []}
+            departmentMemberIds={data?.departments.find((dept) => dept.id === draft.department_id)?.member_ids ?? []}
+            selectedDeps={selectedDepTasks().map((task) => ({ id: task.id, title: task.title }))}
+            attachBusy={attachBusy}
+            subtaskDraft={subtaskDraft}
+            onSubtaskDraftChange={setSubtaskDraft}
+            onSave={(e) => void saveTask(e)}
+            onClose={closeEditor}
+            onToggleStatus={() => {
+              if (editing !== "new") void toggleTask(editing);
+            }}
+            onDelete={() => {
+              if (editing !== "new") void removeTask(editing);
+            }}
+            onStartPickingDeps={startPickingDeps}
+            onConfirmPickedDeps={confirmPickedDeps}
+            onCancelPickedDeps={cancelPickedDeps}
+            onOpenAttachment={(att) => setLightbox(lightboxFor(att))}
+            onAttach={(files) => {
+              if (editing !== "new") void attachToTask(editing, files);
+            }}
+            onDetach={(attachmentId) => {
+              if (editing !== "new") void detachFromTask(editing, attachmentId);
+            }}
+            onOpenSubtask={(child) => {
+              const full = data?.tasks.find((row) => row.id === child.id);
+              if (full) openEdit(full);
+            }}
+            onToggleSubtask={(child) => void toggleSubtask(child)}
+            onSubmitSubtask={() => void submitSubtask()}
+          />
         ) : null}
         {lightbox ? <LightboxOverlay lightbox={lightbox} onClose={() => setLightbox(null)} /> : null}
         <DepartmentViewMenu menu={deptMenu} onOpen={openDepartment} onClose={() => setDeptMenu(null)} />

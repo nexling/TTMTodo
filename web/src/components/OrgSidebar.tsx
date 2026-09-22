@@ -32,7 +32,7 @@ export default function OrgSidebar({
       </Link>
       {showDepartmentWork ? (
         <Link className={`bucket-link${active === "department" ? " active" : ""}`} to="/org/departments">
-          Org-all Projects
+          Org: All Projects
         </Link>
       ) : null}
       <div className="sidebar-foot">

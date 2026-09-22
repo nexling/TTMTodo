@@ -241,7 +241,7 @@ export default function Org() {
             data?.capabilities.can_view_department_work ||
             (data?.lead_department_ids?.length ?? 0) ? (
               <p className="hint" style={{ margin: "4px 0 0" }}>
-                <Link to="/org/departments">Org-all Projects</Link> lists every task in your departments across projects.
+                <Link to="/org/departments">Org: All Projects</Link> lists every task in your departments across projects.
               </p>
             ) : null}
         </div>

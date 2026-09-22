@@ -1477,7 +1477,7 @@ export default function Board() {
         </Link>
         {showDepartmentWork ? (
           <Link className="bucket-link" to="/org/departments" onClick={() => setMenuOpen(false)}>
-            Org-all Projects
+            Org: All Projects
           </Link>
         ) : null}
         {sidebarBuckets.map(({ bucket: b, depth, hasChildren }) =>

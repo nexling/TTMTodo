@@ -1,16 +1,10 @@
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type Attachment, type Membership, type PlanDepartmentWork, type PlanTask } from "../api";
+import { api, type Membership, type PlanDepartmentWork, type PlanSubtask, type PlanTask } from "../api";
 import { useLiveReload } from "../live";
-import { PlanAssigneeSelect } from "../components/PlanAssigneeSelect";
 import OrgSidebar from "../components/OrgSidebar";
-import {
-  AttachmentBlock,
-  FILE_ACCEPT,
-  LightboxOverlay,
-  lightboxFor,
-  type Lightbox,
-} from "../components/ItemCard";
+import PlanTaskEditor, { notifyDaysInput, parseNotifyDays } from "../components/PlanTaskEditor";
+import { LightboxOverlay, lightboxFor, type Lightbox } from "../components/ItemCard";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
 import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
@@ -105,8 +99,10 @@ export default function DepartmentWork() {
     department_id: "",
     assignee_user_id: "",
     due_on: ymd(new Date()),
+    notify_days: "",
     predecessor_ids: [] as string[],
   });
+  const [subtaskDraft, setSubtaskDraft] = useState({ title: "", assignee_user_id: "" });
   const [pickingDeps, setPickingDeps] = useState(false);
   const pickSnapshot = useRef<string[]>([]);
   const { shiftPrompt, shiftBusy, beginShiftFlow, resolveShiftPrompt } = useShiftFlow();
@@ -138,7 +134,7 @@ export default function DepartmentWork() {
         return next.tasks.find((task) => task.id === cur.id) ?? cur;
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load Org-all Projects");
+      setError(err instanceof Error ? err.message : "Could not load Org: All Projects");
       setData(null);
     }
   }
@@ -155,6 +151,7 @@ export default function DepartmentWork() {
   const columns = useMemo(() => {
     const dates: string[] = [];
     for (const task of data?.tasks ?? []) {
+      if (task.parent_id) continue;
       if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
       dates.push(taskDueOn(task));
     }
@@ -174,6 +171,7 @@ export default function DepartmentWork() {
   const tasksByCell = useMemo(() => {
     const map = new Map<string, PlanTask[]>();
     for (const task of data?.tasks ?? []) {
+      if (task.parent_id) continue;
       if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
       const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
       const key = `${rowKey}|${projectTaskColumnKey(taskDueOn(task), zoom)}`;
@@ -190,11 +188,23 @@ export default function DepartmentWork() {
   const spansByRow = useMemo(() => {
     const grouped = new Map<string, PlanTask[]>();
     for (const task of data?.tasks ?? []) {
+      if (task.parent_id) continue;
       if (focusDepartmentId && task.department_id !== focusDepartmentId) continue;
-      const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
-      const list = grouped.get(rowKey) || [];
-      list.push(task);
-      grouped.set(rowKey, list);
+      if (focusDepartmentId) {
+        const dept = grouped.get("dept") || [];
+        dept.push(task);
+        grouped.set("dept", dept);
+        if (task.assignee_user_id) {
+          const people = grouped.get(task.assignee_user_id) || [];
+          people.push(task);
+          grouped.set(task.assignee_user_id, people);
+        }
+      } else {
+        const rowKey = task.department_id || "none";
+        const list = grouped.get(rowKey) || [];
+        list.push(task);
+        grouped.set(rowKey, list);
+      }
     }
     const map = new Map<string, ReturnType<typeof projectSpans>>();
     for (const [rowKey, tasks] of grouped) {
@@ -265,6 +275,7 @@ export default function DepartmentWork() {
       togglePickedDep(task.id);
       return;
     }
+    setSubtaskDraft({ title: "", assignee_user_id: "" });
     setEditing(task);
     setDraft({
       title: task.title,
@@ -272,6 +283,7 @@ export default function DepartmentWork() {
       department_id: task.department_id || "",
       assignee_user_id: task.assignee_user_id || "",
       due_on: taskDueOn(task),
+      notify_days: notifyDaysInput(task.notify_days_before),
       predecessor_ids: task.predecessor_ids,
     });
   }
@@ -281,12 +293,18 @@ export default function DepartmentWork() {
     if (!editing) return;
     const title = draft.title.trim();
     if (!title) return;
+    const parsedNotify = parseNotifyDays(draft.notify_days);
+    if (parsedNotify === "invalid") {
+      setError("Notify days must be 0–365, or empty to turn off.");
+      return;
+    }
     const body = {
       title,
       notes: draft.notes.trim() || null,
       department_id: draft.department_id || null,
       assignee_user_id: draft.assignee_user_id || null,
       due_on: draft.due_on,
+      notify_days_before: parsedNotify,
       predecessor_ids: draft.predecessor_ids,
     };
     const offsetDays = dayDelta(taskDueOn(editing), draft.due_on);
@@ -305,6 +323,7 @@ export default function DepartmentWork() {
           title: body.title,
           notes: body.notes,
           assignee_user_id: body.assignee_user_id,
+          notify_days_before: body.notify_days_before,
           predecessor_ids: body.predecessor_ids,
         });
       } else {
@@ -341,6 +360,37 @@ export default function DepartmentWork() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update task");
+    }
+  }
+
+  async function submitSubtask() {
+    if (!editing || editing.parent_id || !canManageTask(editing)) return;
+    const title = subtaskDraft.title.trim();
+    if (!title) return;
+    setError("");
+    try {
+      await api.createPlanTask(editing.project_id, {
+        title,
+        parent_id: editing.id,
+        department_id: editing.department_id,
+        due_on: taskDueOn(editing),
+        assignee_user_id: subtaskDraft.assignee_user_id || null,
+      });
+      setSubtaskDraft({ title: "", assignee_user_id: "" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add subtask");
+    }
+  }
+
+  async function toggleSubtask(child: PlanSubtask) {
+    if (child.status !== "done" && !child.can_complete) return;
+    setError("");
+    try {
+      await api.updatePlanTask(child.id, { status: child.status === "done" ? "open" : "done" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update subtask");
     }
   }
 
@@ -390,7 +440,9 @@ export default function DepartmentWork() {
     ? (data?.departments ?? []).find((dept) => dept.id === focusDepartmentId) ?? null
     : null;
   const focusMissing = Boolean(data && focusDepartmentId && !focusDept);
-  const focusTasks = (data?.tasks ?? []).filter((task) => focusDepartmentId && task.department_id === focusDepartmentId);
+  const focusTasks = (data?.tasks ?? []).filter(
+    (task) => focusDepartmentId && !task.parent_id && task.department_id === focusDepartmentId,
+  );
   const rows: PlanGridRow[] = focusDepartmentId
     ? focusDept
       ? departmentFocusRows(focusDept, focusTasks, data?.members ?? [])
@@ -410,7 +462,7 @@ export default function DepartmentWork() {
               ←{" "}
               {focusDepartmentId ? (
                 <>
-                  <span className="plan-back-full">Org-all Projects</span>
+                  <span className="plan-back-full">Org: All Projects</span>
                   <span className="plan-back-short">Back</span>
                 </>
               ) : (
@@ -420,7 +472,7 @@ export default function DepartmentWork() {
                 </>
               )}
             </Link>
-            <h1>{focusDepartmentId ? focusDept?.name || "Department" : "Org-all Projects"}</h1>
+            <h1>{focusDepartmentId ? focusDept?.name || "Department" : "Org: All Projects"}</h1>
             <p className="hint plan-toolbar-lead" style={{ margin: "4px 0 0" }}>
               {focusDepartmentId
                 ? "Tasks in this department, across projects."
@@ -471,7 +523,7 @@ export default function DepartmentWork() {
               : "No departments yet."}
           </p>
         ) : null}
-        {focusMissing ? <p className="error">That department is not in Org-all Projects.</p> : null}
+        {focusMissing ? <p className="error">That department is not in Org: All Projects.</p> : null}
         {data && !focusMissing && (focusDept || data.departments.length > 0 || canManageWork) ? (
           <div
             ref={gridWrapRef}
@@ -583,180 +635,45 @@ export default function DepartmentWork() {
           </div>
         ) : null}
 
-        {editing && pickingDeps ? (
-          <div className="plan-editor plan-dep-picker">
-            <div className="panel">
-              <h2>Assign depending tasks</h2>
-              <p className="hint">
-                Click other tasks from {editing.project_name || "this project"}. Those become the tasks this one depends
-                on.
-              </p>
-              <p>
-                Selected: {draft.predecessor_ids.length}{" "}
-                {draft.predecessor_ids.length === 1 ? "task" : "tasks"}
-                {selectedDepTasks().length
-                  ? ` — ${selectedDepTasks()
-                      .map((task) => task.title)
-                      .join(", ")}`
-                  : ""}
-              </p>
-              <div className="composer-row">
-                <button className="btn" type="button" onClick={confirmPickedDeps}>
-                  Confirm
-                </button>
-                <button className="btn ghost" type="button" onClick={cancelPickedDeps}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : editing ? (
-          <div className="plan-editor">
-            <form className="panel" onSubmit={(e) => void saveTask(e)}>
-              <h2>Task</h2>
-              {(() => {
-                const canEdit = canManageTask(editing);
-                const deptOptions = canManageWork
-                  ? data?.departments ?? []
-                  : (data?.departments ?? []).filter((dept) => leadIds.includes(dept.id) || dept.id === draft.department_id);
-                const attachments = editing.attachments ?? [];
-                return (
-                  <>
-                    <p className="hint" style={{ margin: "0 0 10px" }}>
-                      {editing.project_name || "Project"}
-                    </p>
-                    <label>
-                      Title
-                      <input
-                        value={draft.title}
-                        onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                        required
-                        maxLength={500}
-                        disabled={!canEdit}
-                      />
-                    </label>
-                    <label>
-                      Notes
-                      <textarea
-                        value={draft.notes}
-                        onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                        rows={3}
-                        disabled={!canEdit}
-                      />
-                    </label>
-                    {canEdit ? (
-                      <>
-                        <label>
-                          Department
-                          <select
-                            value={draft.department_id}
-                            onChange={(e) => setDraft({ ...draft, department_id: e.target.value })}
-                          >
-                            {canManageWork ? <option value="">Unassigned</option> : null}
-                            {deptOptions.map((dept) => (
-                              <option key={dept.id} value={dept.id}>
-                                {dept.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          Assigned to
-                          <PlanAssigneeSelect
-                            value={draft.assignee_user_id}
-                            onChange={(userId) => setDraft({ ...draft, assignee_user_id: userId })}
-                            members={data?.members ?? []}
-                            departmentMemberIds={
-                              data?.departments.find((dept) => dept.id === draft.department_id)?.member_ids ?? []
-                            }
-                          />
-                        </label>
-                        <label>
-                          Date
-                          <input
-                            type="date"
-                            value={draft.due_on}
-                            onChange={(e) => setDraft({ ...draft, due_on: e.target.value })}
-                          />
-                        </label>
-                        <div className="plan-dep-field">
-                          <span>Depends on</span>
-                          {selectedDepTasks().length ? (
-                            <ul className="plan-dep-list">
-                              {selectedDepTasks().map((task) => (
-                                <li key={task.id}>{task.title}</li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="hint">No depending tasks yet.</p>
-                          )}
-                          <button className="btn" type="button" onClick={startPickingDeps}>
-                            Assign depending tasks
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                    <div className="plan-dep-field">
-                      <span>Attachments</span>
-                      {attachments.length ? (
-                        <div className="thumbs">
-                          {attachments.map((att: Attachment) => (
-                            <AttachmentBlock
-                              key={att.id}
-                              att={att}
-                              onOpen={(file) => setLightbox(lightboxFor(file))}
-                              onRemove={canEdit ? () => void detachFromTask(editing, att.id) : undefined}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="hint">No files yet.</p>
-                      )}
-                      {canEdit ? (
-                        <label className="btn ghost small file-btn">
-                          {attachBusy ? "Adding…" : "Attach"}
-                          <input
-                            type="file"
-                            multiple
-                            accept={FILE_ACCEPT}
-                            disabled={attachBusy}
-                            onChange={(e) => {
-                              const chosen = e.target.files;
-                              if (chosen?.length) void attachToTask(editing, Array.from(chosen));
-                              e.target.value = "";
-                            }}
-                          />
-                        </label>
-                      ) : null}
-                    </div>
-                    <div className="composer-row">
-                      {editing.can_complete || editing.status === "done" ? (
-                        <button className="btn" type="button" onClick={() => void toggleTask(editing)}>
-                          {editing.status === "done" ? "Reopen" : "Mark done"}
-                        </button>
-                      ) : null}
-                      {canEdit ? (
-                        <button className="btn" type="submit">
-                          Save
-                        </button>
-                      ) : null}
-                      {canEdit ? (
-                        <button className="btn ghost" type="button" onClick={() => void removeTask(editing)}>
-                          Delete
-                        </button>
-                      ) : null}
-                      <Link className="btn ghost" to={`/org/projects/${editing.project_id}`}>
-                        Open project
-                      </Link>
-                      <button className="btn ghost" type="button" onClick={closeEditor}>
-                        Close
-                      </button>
-                    </div>
-                  </>
-                );
-              })()}
-            </form>
-          </div>
+        {editing ? (
+          <PlanTaskEditor
+            editing={editing}
+            pickingDeps={pickingDeps}
+            draft={draft}
+            onDraftChange={setDraft}
+            canEdit={canManageTask(editing)}
+            departments={
+              canManageWork
+                ? data?.departments ?? []
+                : (data?.departments ?? []).filter((dept) => leadIds.includes(dept.id) || dept.id === draft.department_id)
+            }
+            allowUnassigned={canManageWork}
+            members={data?.members ?? []}
+            departmentMemberIds={data?.departments.find((dept) => dept.id === draft.department_id)?.member_ids ?? []}
+            selectedDeps={selectedDepTasks().map((task) => ({ id: task.id, title: task.title }))}
+            attachBusy={attachBusy}
+            subtaskDraft={subtaskDraft}
+            onSubtaskDraftChange={setSubtaskDraft}
+            onSave={(e) => void saveTask(e)}
+            onClose={closeEditor}
+            onToggleStatus={() => void toggleTask(editing)}
+            onDelete={() => void removeTask(editing)}
+            onStartPickingDeps={startPickingDeps}
+            onConfirmPickedDeps={confirmPickedDeps}
+            onCancelPickedDeps={cancelPickedDeps}
+            onOpenAttachment={(att) => setLightbox(lightboxFor(att))}
+            onAttach={(files) => void attachToTask(editing, files)}
+            onDetach={(attachmentId) => void detachFromTask(editing, attachmentId)}
+            onOpenSubtask={(child) => {
+              const full = data?.tasks.find((row) => row.id === child.id);
+              if (full) openEdit(full);
+            }}
+            onToggleSubtask={(child) => void toggleSubtask(child)}
+            onSubmitSubtask={() => void submitSubtask()}
+            projectName={editing.project_name || "Project"}
+            projectHref={`/org/projects/${editing.project_id}`}
+            dependsHint={`Click other tasks from ${editing.project_name || "this project"}. Those become the tasks this one depends on.`}
+          />
         ) : null}
         {lightbox ? <LightboxOverlay lightbox={lightbox} onClose={() => setLightbox(null)} /> : null}
         <DepartmentViewMenu menu={deptMenu} onOpen={openDepartment} onClose={() => setDeptMenu(null)} />
