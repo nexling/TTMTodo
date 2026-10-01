@@ -116,8 +116,6 @@ def serialize_user(user: User) -> dict[str, Any]:
         "username": user.username,
         "email": user.email,
         "name": user.name,
-        "auth_provider_id": user.auth_provider_id,
-        "is_admin": bool(user.is_admin),
     }
 
 

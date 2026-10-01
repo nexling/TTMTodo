@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Iterator
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 import requests
 
@@ -19,7 +19,6 @@ log = logging.getLogger("magictodo.outlook")
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 SCOPES = ["Calendars.Read", "User.Read"]
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 PALETTE = ("#6a8caf", "#b57bb0", "#7c9a6d", "#d4654f", "#e8a54b", "#c4842e")
 INSECURE_OAUTH_REDIRECT = (
     "Microsoft blocks HTTP OAuth except on 127.0.0.1. From Windows run "
@@ -178,14 +177,6 @@ def redirect_uri(request_base: str | None = None) -> str:
     if request_base:
         return request_base.rstrip("/") + "/api/outlook/callback"
     return f"http://127.0.0.1:{settings.port}/api/outlook/callback"
-
-
-def oauth_redirect_allowed(uri: str) -> bool:
-    parsed = urlparse(uri)
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme == "https" and host:
-        return True
-    return parsed.scheme == "http" and host in LOOPBACK_HOSTS
 
 
 def _authority() -> str:

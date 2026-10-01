@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
 import re
 import secrets
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import bcrypt
 from fastapi import HTTPException, UploadFile
 from PIL import Image, UnidentifiedImageError
 
 from app.config import settings
+
+WEAK_SECRET_KEYS = frozenset({"", "dev-only-change-me", "change-me-to-a-long-random-string"})
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+MIN_SECRET_KEY_LEN = 24
 
 ALLOWED_IMAGE_FORMATS = {
     "JPEG": ("image/jpeg", ".jpg"),
@@ -63,8 +69,85 @@ def new_api_token() -> str:
     return "mt_" + secrets.token_urlsafe(32)
 
 
+def secret_key_is_weak(secret: str | None = None) -> bool:
+    value = (secret if secret is not None else settings.secret_key).strip()
+    return value in WEAK_SECRET_KEYS or len(value) < MIN_SECRET_KEY_LEN
+
+
+def public_url_hostname() -> str | None:
+    raw = (settings.public_url or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.hostname or "").lower()
+    return host or None
+
+
+def production_locked() -> bool:
+    if settings.session_https_only:
+        return True
+    host = public_url_hostname()
+    return bool(host and host not in LOOPBACK_HOSTS)
+
+
+def auth0_configured() -> bool:
+    return bool(
+        settings.auth0_domain.strip()
+        and settings.auth0_client_id.strip()
+        and settings.auth0_client_secret.strip()
+    )
+
+
+def validate_runtime_security() -> None:
+    if secret_key_is_weak():
+        raise RuntimeError(
+            "SECRET_KEY is missing or a placeholder. Set a long random SECRET_KEY in .env."
+        )
+    if production_locked() and not auth0_configured():
+        raise RuntimeError(
+            "Auth0 is required on this host. Set AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET."
+        )
+
+
+def oauth_allowed_hosts() -> set[str]:
+    hosts = set(LOOPBACK_HOSTS)
+    host = public_url_hostname()
+    if host:
+        hosts.add(host)
+    return hosts
+
+
+def oauth_redirect_allowed(uri: str) -> bool:
+    parsed = urlparse(uri)
+    host = (parsed.hostname or "").lower()
+    if not host or host not in oauth_allowed_hosts():
+        return False
+    if parsed.scheme == "http":
+        return host in LOOPBACK_HOSTS
+    return parsed.scheme == "https"
+
+
 def hash_token(token: str) -> str:
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def legacy_hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def token_hash_matches(stored: str, token: str) -> bool:
+    stored = (stored or "").strip()
+    if not stored:
+        return False
+    wanted = hash_token(token)
+    if len(stored) == len(wanted) and hmac.compare_digest(stored, wanted):
+        return True
+    legacy = legacy_hash_token(token)
+    return len(stored) == len(legacy) and hmac.compare_digest(stored, legacy)
 
 
 def token_prefix(token: str) -> str:

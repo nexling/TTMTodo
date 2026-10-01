@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.ical_export import (
     status_payload,
 )
 from app.models import User
+from app.ratelimit import ics_feed_limiter
 from app.schemas import CalendarExportStatusOut
 
 router = APIRouter(tags=["calendar-export"])
@@ -50,7 +51,10 @@ def calendar_export_disable(user: User = Depends(require_licensed)):
 
 
 @router.get("/api/calendar/feed/{token}")
-def calendar_feed(token: str, db: Session = Depends(get_db)):
+def calendar_feed(token: str, request: Request, db: Session = Depends(get_db)):
+    client = request.client.host if request.client else "unknown"
+    if not ics_feed_limiter.allow(client):
+        raise HTTPException(status_code=429, detail="Too many calendar feed requests")
     user = find_user_for_token(db, token)
     if user is None:
         raise HTTPException(status_code=404, detail="Calendar feed not found")

@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal, engine
 from app.models import Base, Bucket, Item, User
-from app.security import hash_password
+from app.orgs import is_site_admin_email
+from app.security import hash_password, production_locked
 from app.userfiles import google_config_path, google_status_path, remarkable_config_path, remarkable_status_path, user_data_dir
 from app.vapid import ensure_vapid_keys
 
@@ -493,30 +494,74 @@ def bootstrap() -> None:
     with SessionLocal() as db:
         user_count = db.scalar(select(func.count()).select_from(User)) or 0
         if user_count == 0:
-            if settings.auth0_is_enabled:
+            if settings.auth0_is_enabled or production_locked():
                 log.info("No users yet — sign in with Auth0.")
-                return
-            if not settings.magictodo_user or not settings.magictodo_password:
+            elif not settings.magictodo_user or not settings.magictodo_password:
                 log.info("No users yet — complete setup in the browser.")
-                return
-            user = User(
-                username=settings.magictodo_user.strip(),
-                password_hash=hash_password(settings.magictodo_password),
-                is_admin=True,
-            )
-            db.add(user)
-            db.flush()
-            ensure_inbox(db, user)
+            else:
+                user = User(
+                    username=settings.magictodo_user.strip(),
+                    password_hash=hash_password(settings.magictodo_password),
+                    is_admin=True,
+                )
+                db.add(user)
+                db.flush()
+                ensure_inbox(db, user)
+                db.commit()
+                log.info("Created first user %s", user.username)
+        else:
+            for user in db.scalars(select(User)).all():
+                ensure_inbox(db, user)
             db.commit()
-            log.info("Created first user %s", user.username)
-            migrate_user_secrets()
-            return
-
-        for user in db.scalars(select(User)).all():
-            ensure_inbox(db, user)
-        db.commit()
 
     migrate_user_secrets()
+    restrict_client_integrations()
+    rotate_plain_calendar_feeds()
+
+
+def restrict_client_integrations() -> None:
+    """Google Tasks/Keep and reMarkable are site-admin only. Strip other users' files."""
+    names = (
+        "google.json",
+        "google_status.json",
+        "remarkable.json",
+        "remarkable_status.json",
+        "remarkable_key",
+    )
+    with SessionLocal() as db:
+        for user in db.scalars(select(User)).all():
+            if is_site_admin_email(user.email):
+                continue
+            folder = settings.data_dir / "users" / user.id
+            if not folder.is_dir():
+                continue
+            removed = False
+            for name in names:
+                path = folder / name
+                if path.is_file():
+                    path.unlink()
+                    removed = True
+            if removed:
+                log.info("Removed Google/reMarkable files for non-admin %s", user.username)
+
+
+def rotate_plain_calendar_feeds() -> None:
+    """One-shot: drop old ICS subscribe secrets so Outlook must be given a new URL."""
+    flag = settings.data_dir / ".ics_feed_rotated_v1"
+    if flag.is_file():
+        return
+    users_dir = settings.data_dir / "users"
+    n = 0
+    if users_dir.is_dir():
+        for path in users_dir.glob("*/calendar_export.json"):
+            try:
+                path.unlink()
+                n += 1
+            except OSError:
+                continue
+    flag.write_text("rotated\n")
+    if n:
+        log.info("Invalidated %s Outlook subscribe feeds; enable a new URL in Settings", n)
 
 
 def migrate_user_secrets() -> None:

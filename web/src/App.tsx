@@ -13,6 +13,7 @@ import MyOrgTodos from "./pages/MyOrgTodos";
 import PlanBoard from "./pages/PlanBoard";
 import PlanTemplatePage from "./pages/PlanTemplate";
 import Settings from "./pages/Settings";
+import Security from "./pages/Security";
 import Unlicensed from "./pages/Unlicensed";
 import WebsiteAdmin from "./pages/WebsiteAdmin";
 
@@ -150,6 +151,16 @@ function AuthRoutes({
             onLogout={() => {
               window.location.href = status.logout_url;
             }}
+          />
+        }
+      />
+      <Route
+        path="/security"
+        element={
+          <Security
+            username={displayName}
+            isSiteAdmin={status.is_site_admin}
+            organizationName={status.organization?.name}
           />
         }
       />

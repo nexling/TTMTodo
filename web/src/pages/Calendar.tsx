@@ -26,6 +26,7 @@ import { subscribePush } from "../push";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { bucketOptionLabel, walkBucketTree } from "../bucketTree";
 import { saveItemWithPlanDue } from "../planDue";
+import { useAuthStatus } from "../authStatus";
 import { useLiveReload } from "../live";
 import SidebarResizeHandle from "../components/SidebarResizeHandle";
 import OrgNavLinks from "../components/OrgNavLinks";
@@ -438,6 +439,7 @@ function minutesFromMidnight(d: Date): number {
 
 export default function Calendar() {
   const navigate = useNavigate();
+  const isSiteAdmin = Boolean(useAuthStatus()?.is_site_admin);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [outlook, setOutlook] = useState<OutlookEvent[]>([]);
@@ -485,11 +487,15 @@ export default function Calendar() {
       .items(undefined, false)
       .then(setItems)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load items"));
+    if (!isSiteAdmin) {
+      setRemarkableConfigured(false);
+      return;
+    }
     void api
       .remarkableStatus()
       .then((status) => setRemarkableConfigured(Boolean(status.configured)))
       .catch(() => setRemarkableConfigured(false));
-  }, []);
+  }, [isSiteAdmin]);
 
   useEffect(() => {
     const from = start.toISOString();

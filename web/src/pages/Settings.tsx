@@ -109,11 +109,21 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
   async function load() {
     setTokens(await api.tokens());
     setBuckets(await api.buckets());
-    applyRemarkable(await api.remarkableStatus());
-    const google = await api.googleStatus(true);
-    setG(google);
-    setKeepIds(google.keep.lists.filter((row) => row.selected).map((row) => row.id));
-    if (google.keep.label) setKeepEmail(google.keep.label);
+    if (isSiteAdmin) {
+      try {
+        applyRemarkable(await api.remarkableStatus());
+      } catch {
+        setRm(null);
+      }
+      try {
+        const google = await api.googleStatus(true);
+        setG(google);
+        setKeepIds(google.keep.lists.filter((row) => row.selected).map((row) => row.id));
+        if (google.keep.label) setKeepEmail(google.keep.label);
+      } catch (e) {
+        setGErr(e instanceof Error ? e.message : "Could not load Google status");
+      }
+    }
     try {
       applyOutlook(await api.outlookStatus(true));
     } catch (e) {
@@ -594,6 +604,9 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
               Website admin
             </Link>
           ) : null}
+          <Link className="nav-btn" to="/security">
+            Your data
+          </Link>
           <a className="nav-btn" href="/logout">
             Sign out
           </a>
@@ -897,6 +910,8 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
           ))}
         </section>
 
+        {isSiteAdmin ? (
+        <>
         <section className="panel">
           <h2>reMarkable</h2>
           <p className="hint">
@@ -1190,6 +1205,8 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
             </button>
           </div>
         </section>
+        </>
+        ) : null}
 
         <section className="panel">
           <h2>Outlook calendar</h2>
@@ -1348,7 +1365,7 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
             Outlook (and other calendars) can subscribe to a live feed of your open TTM-Todo due dates.
             There is no file download — paste the secret URL so Outlook keeps refreshing as tasks change.
             Outlook on the web: Add calendar → Subscribe from web. Outlook desktop: Add Calendar → From
-            Internet.
+            Internet. The URL is shown only when you enable or regenerate it.
           </p>
           {calExportErr ? <p className="error">{calExportErr}</p> : null}
           {origin.startsWith("https://") || origin.includes("127.0.0.1") ? null : (
@@ -1357,15 +1374,24 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
               Outlook can use this URL if it can reach {origin}.
             </p>
           )}
-          {calExport?.enabled && calExport.path ? (
+          {calExport?.enabled ? (
             <>
-              <p className="hint">The URL is a secret — treat it like a password.</p>
-              <CopyRow
-                label="Subscribe URL"
-                value={`${origin}${calExport.path}`}
-                copied={copied === "cal-export"}
-                onCopy={() => void copyValue("cal-export", `${origin}${calExport.path}`)}
-              />
+              {calExport.path ? (
+                <>
+                  <p className="hint">Copy this now. It will not be shown again. Treat it like a password.</p>
+                  <CopyRow
+                    label="Subscribe URL"
+                    value={`${origin}${calExport.path}`}
+                    copied={copied === "cal-export"}
+                    onCopy={() => void copyValue("cal-export", `${origin}${calExport.path}`)}
+                  />
+                </>
+              ) : (
+                <p className="hint">
+                  A subscribe URL is already active. It is not stored in a retrievable form. Regenerate
+                  to get a new URL (Outlook will need the new link).
+                </p>
+              )}
               <div className="settings-actions">
                 <button
                   className="btn"

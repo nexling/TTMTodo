@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_session_user, require_licensed
+from app.deps import get_session_user, require_integration_admin
 from app.google_lists import (
     GoogleListsError,
     INSECURE_OAUTH_REDIRECT,
@@ -14,7 +14,6 @@ from app.google_lists import (
     disconnect_tasks,
     oauth_authorization_url,
     oauth_exchange,
-    oauth_redirect_allowed,
     pull,
     redirect_uri,
     set_keep_lists,
@@ -23,7 +22,9 @@ from app.google_lists import (
     tasks_oauth_configured,
 )
 from app.models import User
+from app.orgs import is_site_admin_email
 from app.schemas import GoogleKeepConnectIn, GoogleKeepListsIn, GoogleStatusOut, GoogleTasksListIn
+from app.security import oauth_redirect_allowed
 
 router = APIRouter(tags=["google"])
 
@@ -34,12 +35,12 @@ def _settings_redirect(error: str | None = None) -> RedirectResponse:
 
 
 @router.get("/api/google", response_model=GoogleStatusOut)
-def google_status(refresh: bool = False, user: User = Depends(require_licensed)):
+def google_status(refresh: bool = False, user: User = Depends(require_integration_admin)):
     return GoogleStatusOut(**status_payload(user, refresh=refresh))
 
 
 @router.get("/api/google/tasks/connect")
-def google_tasks_connect(request: Request, user: User = Depends(require_licensed)):
+def google_tasks_connect(request: Request, user: User = Depends(require_integration_admin)):
     if not tasks_oauth_configured():
         raise HTTPException(
             status_code=400,
@@ -63,6 +64,8 @@ def google_tasks_connect(request: Request, user: User = Depends(require_licensed
 def google_callback(request: Request, user: User | None = Depends(get_session_user)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    if not is_site_admin_email(user.email):
+        return _settings_redirect("Google Tasks is limited to site admins")
     params = request.query_params
     if params.get("error"):
         return _settings_redirect(params.get("error_description") or params.get("error") or "Google denied access")
@@ -83,13 +86,13 @@ def google_callback(request: Request, user: User | None = Depends(get_session_us
 
 
 @router.post("/api/google/tasks/disconnect")
-def google_tasks_disconnect(user: User = Depends(require_licensed)):
+def google_tasks_disconnect(user: User = Depends(require_integration_admin)):
     disconnect_tasks(user)
     return GoogleStatusOut(**status_payload(user))
 
 
 @router.post("/api/google/tasks/list", response_model=GoogleStatusOut)
-def google_tasks_list(body: GoogleTasksListIn, user: User = Depends(require_licensed)):
+def google_tasks_list(body: GoogleTasksListIn, user: User = Depends(require_integration_admin)):
     try:
         set_tasks_list(user, body.list_id.strip())
     except GoogleListsError as exc:
@@ -98,7 +101,7 @@ def google_tasks_list(body: GoogleTasksListIn, user: User = Depends(require_lice
 
 
 @router.post("/api/google/keep/connect", response_model=GoogleStatusOut)
-def google_keep_connect(body: GoogleKeepConnectIn, user: User = Depends(require_licensed)):
+def google_keep_connect(body: GoogleKeepConnectIn, user: User = Depends(require_integration_admin)):
     try:
         connect_keep(user, body.email, body.master_token)
     except GoogleListsError as exc:
@@ -107,13 +110,13 @@ def google_keep_connect(body: GoogleKeepConnectIn, user: User = Depends(require_
 
 
 @router.post("/api/google/keep/disconnect")
-def google_keep_disconnect(user: User = Depends(require_licensed)):
+def google_keep_disconnect(user: User = Depends(require_integration_admin)):
     disconnect_keep(user)
     return GoogleStatusOut(**status_payload(user))
 
 
 @router.post("/api/google/keep/lists", response_model=GoogleStatusOut)
-def google_keep_lists(body: GoogleKeepListsIn, user: User = Depends(require_licensed)):
+def google_keep_lists(body: GoogleKeepListsIn, user: User = Depends(require_integration_admin)):
     try:
         set_keep_lists(user, body.note_ids, watch_all=body.watch_all)
     except GoogleListsError as exc:
@@ -122,6 +125,6 @@ def google_keep_lists(body: GoogleKeepListsIn, user: User = Depends(require_lice
 
 
 @router.post("/api/google/sync", response_model=GoogleStatusOut)
-def google_sync(user: User = Depends(require_licensed), db: Session = Depends(get_db)):
+def google_sync(user: User = Depends(require_integration_admin), db: Session = Depends(get_db)):
     pull(db, user)
     return GoogleStatusOut(**status_payload(user))

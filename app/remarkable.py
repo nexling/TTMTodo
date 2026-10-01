@@ -883,6 +883,7 @@ def push_item(db: Session, user: User, item_id: str) -> dict:
 def cli_pull() -> int:
     from app.bootstrap import bootstrap
     from app.database import SessionLocal
+    from app.orgs import is_site_admin_email
 
     bootstrap()
     any_cfg = False
@@ -893,6 +894,8 @@ def cli_pull() -> int:
             print("No TTM-Todo user yet")
             return 1
         for user in users:
+            if not is_site_admin_email(user.email):
+                continue
             with acting_as(user):
                 if not configured():
                     continue

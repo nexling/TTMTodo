@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import secrets
@@ -14,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.models import Item, User
 from app.orgs import user_is_licensed
-from app.security import hash_token
+from app.security import hash_token, token_hash_matches
 from app.userfiles import calendar_export_path
 
 log = logging.getLogger("magictodo.ical_export")
@@ -37,7 +36,7 @@ def _utc(dt: datetime | None) -> datetime | None:
 
 
 def _empty_config() -> dict[str, Any]:
-    return {"token": "", "token_hash": ""}
+    return {"token_hash": ""}
 
 
 def load_config(user_id: str) -> dict[str, Any]:
@@ -50,13 +49,8 @@ def load_config(user_id: str) -> dict[str, Any]:
         return _empty_config()
     if not isinstance(raw, dict):
         return _empty_config()
-    token = str(raw.get("token") or "").strip()
     stored_hash = str(raw.get("token_hash") or "").strip()
-    if token and not stored_hash:
-        stored_hash = hash_token(token)
-    if stored_hash and not token:
-        return _empty_config()
-    return {"token": token, "token_hash": stored_hash}
+    return {"token_hash": stored_hash}
 
 
 def save_config(user_id: str, cfg: dict[str, Any]) -> None:
@@ -81,24 +75,23 @@ def _new_token() -> str:
     return TOKEN_PREFIX + secrets.token_urlsafe(32)
 
 
-def status_payload(user: User) -> dict[str, Any]:
+def status_payload(user: User, *, path: str | None = None) -> dict[str, Any]:
     cfg = load_config(user.id)
-    token = cfg.get("token") or ""
-    if not token or not cfg.get("token_hash"):
+    if not cfg.get("token_hash"):
         return {"enabled": False, "path": None}
-    return {"enabled": True, "path": feed_path(token)}
+    return {"enabled": True, "path": path}
 
 
 def enable_feed(user: User) -> dict[str, Any]:
     cfg = load_config(user.id)
-    if cfg.get("token") and cfg.get("token_hash"):
+    if cfg.get("token_hash"):
         return status_payload(user)
     return rotate_feed(user)
 
 
 def rotate_feed(user: User) -> dict[str, Any]:
     token = _new_token()
-    save_config(user.id, {"token": token, "token_hash": hash_token(token)})
+    save_config(user.id, {"token_hash": hash_token(token)})
     return {"enabled": True, "path": feed_path(token)}
 
 
@@ -113,7 +106,6 @@ def find_user_for_token(db: Session, token: str) -> User | None:
         raw = raw[:-4]
     if not raw.startswith(TOKEN_PREFIX):
         return None
-    wanted = hash_token(raw)
     users_dir = settings.data_dir / "users"
     if not users_dir.is_dir():
         return None
@@ -125,9 +117,7 @@ def find_user_for_token(db: Session, token: str) -> User | None:
         if not isinstance(data, dict):
             continue
         stored = str(data.get("token_hash") or "").strip()
-        if not stored and data.get("token"):
-            stored = hash_token(str(data.get("token") or ""))
-        if not stored or len(stored) != len(wanted) or not hmac.compare_digest(stored, wanted):
+        if not stored or not token_hash_matches(stored, raw):
             continue
         user = db.get(User, path.parent.name)
         if user is None:

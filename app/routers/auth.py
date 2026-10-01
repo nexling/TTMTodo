@@ -10,7 +10,7 @@ from app.deps import resolve_api_user
 from app.models import User
 from app.orgs import get_user_context, is_site_admin_email, user_is_licensed
 from app.schemas import LoginIn, SetupIn, UserOut
-from app.security import hash_password, verify_password
+from app.security import hash_password, production_locked, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -53,7 +53,7 @@ def auth_status(
 
 @router.post("/setup", response_model=UserOut)
 def setup(body: SetupIn, request: Request, db: Session = Depends(get_db)):
-    if settings.auth0_is_enabled:
+    if settings.auth0_is_enabled or production_locked():
         raise HTTPException(status_code=400, detail="Use Auth0 to create an account")
     existing = db.scalar(select(func.count()).select_from(User)) or 0
     if existing:
@@ -73,7 +73,7 @@ def setup(body: SetupIn, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=UserOut)
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
-    if settings.auth0_is_enabled:
+    if settings.auth0_is_enabled or production_locked():
         raise HTTPException(status_code=400, detail="Use Auth0 to sign in")
     user = db.scalar(select(User).where(User.username == body.username.strip()))
     if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):

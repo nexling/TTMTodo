@@ -34,7 +34,8 @@ def subscribe(
         )
         db.add(row)
     else:
-        row.user_id = user.id
+        if row.user_id != user.id:
+            raise HTTPException(status_code=409, detail="Push subscription already registered")
         row.p256dh = body.keys.p256dh
         row.auth = body.keys.auth
     db.commit()

@@ -9,7 +9,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Iterator
-from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -26,7 +25,6 @@ TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
 DEFAULT_KEEP_TITLES = frozenset({"shopping list", "shopping", "magictodo", "ttm-todo", "ttm todo"})
 PROVIDER_TASKS = "tasks"
 PROVIDER_KEEP = "keep"
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 INSECURE_OAUTH_REDIRECT = (
     "Google blocks HTTP OAuth except on 127.0.0.1. From Windows run "
     "ssh -L 8010:127.0.0.1:8010 nexserve, open http://127.0.0.1:8010/settings, "
@@ -143,14 +141,6 @@ def redirect_uri(request_base: str | None = None) -> str:
     if request_base:
         return request_base.rstrip("/") + "/api/google/callback"
     return f"http://127.0.0.1:{settings.port}/api/google/callback"
-
-
-def oauth_redirect_allowed(uri: str) -> bool:
-    parsed = urlparse(uri)
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme == "https" and host:
-        return True
-    return parsed.scheme == "http" and host in LOOPBACK_HOSTS
 
 
 def _allow_http_oauth() -> None:
@@ -836,6 +826,7 @@ def pull(db: Session, user: User) -> dict[str, Any]:
 def cli_pull() -> int:
     from app.bootstrap import bootstrap
     from app.database import SessionLocal
+    from app.orgs import is_site_admin_email
 
     bootstrap()
     any_connected = False
@@ -846,6 +837,8 @@ def cli_pull() -> int:
             print("No TTM-Todo user yet")
             return 1
         for user in users:
+            if not is_site_admin_email(user.email):
+                continue
             with acting_as(user):
                 if not tasks_connected() and not keep_connected():
                     continue

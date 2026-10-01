@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, type Attachment, type Bucket, type Item } from "../api";
+import { useAuthStatus } from "../authStatus";
 import { useLiveReload } from "../live";
 import {
   FILE_ACCEPT,
@@ -550,6 +551,7 @@ export default function Board() {
   const { bucketId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const isSiteAdmin = Boolean(useAuthStatus()?.is_site_admin);
   const viewAll = location.pathname === "/all";
   const viewDone = location.pathname === "/done";
   const todayKey = dayKey(startOfLocalDay());
@@ -671,11 +673,15 @@ export default function Board() {
     void loadBuckets().catch((err: unknown) =>
       setError(err instanceof Error ? err.message : "Failed to load buckets"),
     );
+    if (!isSiteAdmin) {
+      setRemarkableConfigured(false);
+      return;
+    }
     void api
       .remarkableStatus()
       .then((status) => setRemarkableConfigured(Boolean(status.configured)))
       .catch(() => setRemarkableConfigured(false));
-  }, []);
+  }, [isSiteAdmin]);
 
   useEffect(() => {
     function syncInboxPrefs() {

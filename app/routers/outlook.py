@@ -13,12 +13,12 @@ from app.outlook import (
     exchange_code,
     fetch_events,
     oauth_configured,
-    oauth_redirect_allowed,
     redirect_uri,
     set_calendars,
     status_payload,
 )
 from app.schemas import OutlookCalendarsIn, OutlookDisconnectIn, OutlookEventOut, OutlookStatusOut
+from app.security import oauth_redirect_allowed
 
 router = APIRouter(tags=["outlook"])
 

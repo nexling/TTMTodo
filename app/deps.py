@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models import ApiToken, User
 from app.orgs import is_site_admin_email, user_is_licensed
 from app.schemas import API_SCOPES
-from app.security import hash_token
+from app.security import hash_token, legacy_hash_token, token_hash_matches
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -59,6 +59,15 @@ def _load_bearer_token(
             ApiToken.revoked_at.is_(None),
         )
     )
+    if token_row is None:
+        token_row = db.scalar(
+            select(ApiToken).where(
+                ApiToken.token_hash == legacy_hash_token(token),
+                ApiToken.revoked_at.is_(None),
+            )
+        )
+        if token_row is not None and token_hash_matches(token_row.token_hash, token):
+            token_row.token_hash = hash_token(token)
     if token_row is None:
         raise HTTPException(status_code=401, detail="Invalid API token")
     user = db.get(User, token_row.user_id)
@@ -119,6 +128,12 @@ def require_licensed(
 
 
 def require_site_admin(user: User = Depends(require_user)) -> User:
+    if is_site_admin_email(user.email):
+        return user
+    raise HTTPException(status_code=403, detail="Site admin only")
+
+
+def require_integration_admin(user: User = Depends(require_licensed)) -> User:
     if is_site_admin_email(user.email):
         return user
     raise HTTPException(status_code=403, detail="Site admin only")

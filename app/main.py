@@ -13,6 +13,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.auth0 import configure_oauth, login_router as auth0_login_router, logout_router as auth0_logout_router
 from app.bootstrap import bootstrap
+from app.headers import SecurityHeadersMiddleware
 from app.session import SchemeAwareSessionMiddleware
 from app.config import settings
 from app.database import get_db
@@ -22,6 +23,7 @@ from app.models import User
 from app.orgs import user_is_licensed
 from app.live import router as live_router, set_loop
 from app.routers import admin, auth, buckets, calendar_export, files, google, ical, inbox, items, notifications, orgs, outlook, plan, remarkable, push, tokens
+from app.security import validate_runtime_security
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("magictodo")
@@ -31,8 +33,7 @@ DIST_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if settings.secret_key in {"", "dev-only-change-me", "change-me-to-a-long-random-string"}:
-        log.warning("SECRET_KEY is not set to a strong value")
+    validate_runtime_security()
     bootstrap()
     configure_oauth()
     set_loop(asyncio.get_running_loop())
@@ -43,6 +44,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="TTM-Todo", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     SchemeAwareSessionMiddleware,
     secret_key=settings.secret_key,
