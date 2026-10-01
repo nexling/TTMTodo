@@ -102,13 +102,14 @@ function persistView(view: CalView) {
 }
 
 function readCalBucket(buckets: Bucket[]): string {
+  const unlocked = buckets.filter((b) => !b.locked);
   try {
     const id = localStorage.getItem(CAL_BUCKET_KEY);
-    if (id && buckets.some((b) => b.id === id)) return id;
+    if (id && unlocked.some((b) => b.id === id)) return id;
   } catch {
     /* ignore */
   }
-  return buckets.find((b) => b.is_inbox)?.id ?? buckets[0]?.id ?? "";
+  return unlocked.find((b) => b.is_inbox)?.id ?? unlocked[0]?.id ?? "";
 }
 
 function persistCalBucket(id: string) {
@@ -707,6 +708,7 @@ export default function Calendar() {
 
   async function move(item: Item, dest: string) {
     if (item.plan_task_id || dest === item.bucket_id) return;
+    if (buckets.find((b) => b.id === dest)?.locked) return;
     await api.patchItem(item.id, { bucket_id: dest });
     const next = await refreshItems();
     syncPopover(next, popover?.event.itemId);
@@ -1304,7 +1306,9 @@ export default function Calendar() {
               <label>
                 Bucket
                 <select value={composeBucket} onChange={(e) => setComposeBucket(e.target.value)} aria-label="Bucket">
-                  {walkBucketTree(buckets).map(({ bucket: b, depth }) => (
+                  {walkBucketTree(buckets)
+                    .filter(({ bucket: b }) => !b.locked)
+                    .map(({ bucket: b, depth }) => (
                     <option key={b.id} value={b.id}>
                       {bucketOptionLabel(b, depth)}
                     </option>

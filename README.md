@@ -129,7 +129,22 @@ Content-Type: multipart/form-data
   source: optional label (default api)
 ```
 
-At least one of `text` or `image` is required (`image` is multipart only). Always creates an Inbox item. First line of `text` becomes the title; the rest becomes notes.
+At least one of `text` or `image` is required (`image` is multipart only). Always creates an Inbox item. First line of `text` becomes the title; the rest becomes notes. Capture tokens are **inbox-only**. Create a token with `items` / `buckets` / `plan` scopes for the full machine API.
+
+## Machine API
+
+The web UI and bots use the same `/api/items`, `/api/buckets`, and `/api/plan` routes. Tokens are minted in Settings (default scope `inbox`). Live spec (licensed session or any valid token):
+
+- https://todo.takttimemodular.com/docs
+- https://todo.takttimemodular.com/openapi.json
+
+Checked-in copy: [`docs/openapi.json`](docs/openapi.json). Regenerate with:
+
+```bash
+.venv/bin/python scripts/export_openapi.py
+```
+
+`POST /api/items` accepts JSON (`source` defaults to `api`) or multipart (files). Personal items cannot be created or moved into locked organization/project folders — those hold plan mirrors. Plan writes use `/api/plan/...` plus `X-Organization-Id` when the account has more than one licensed org. Errors are FastAPI `{ "detail": ... }`.
 
 ## Siri (Shortcuts)
 

@@ -1,15 +1,12 @@
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
 from app.database import get_db
-from app.deps import require_token_user
-from app.models import Bucket, Item, User
-from app.routers.items import add_attachment, item_out, load_item
+from app.deps import require_scope
+from app.items import create_item, item_out, load_item
+from app.models import User
 from app.schemas import InboxCaptureIn, ItemOut
 
 router = APIRouter(prefix="/api/inbox", tags=["inbox"])
@@ -33,10 +30,10 @@ async def _parse_capture(request: Request) -> tuple[str | None, str, UploadFile 
     if "application/json" in ctype:
         try:
             payload = InboxCaptureIn.model_validate(await request.json())
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=400, detail="Invalid JSON") from exc
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=json.loads(exc.json())) from exc
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON") from exc
         return payload.text, _source_label(payload.source), None
 
     form = await request.form()
@@ -52,7 +49,7 @@ async def _parse_capture(request: Request) -> tuple[str | None, str, UploadFile 
 @router.post("", response_model=ItemOut)
 async def capture_inbox(
     request: Request,
-    user: User = Depends(require_token_user),
+    user: User = Depends(require_scope("inbox")),
     db: Session = Depends(get_db),
 ):
     text, src, image = await _parse_capture(request)
@@ -61,24 +58,15 @@ async def capture_inbox(
     if not clean_text and not has_image:
         raise HTTPException(status_code=400, detail="Provide text or an image")
 
-    inbox = db.scalar(
-        select(Bucket).where(Bucket.user_id == user.id, Bucket.is_inbox.is_(True))
-    )
-    if inbox is None:
-        raise HTTPException(status_code=500, detail="Inbox missing")
-
     title, notes = _title_and_notes(clean_text)
-    item = Item(
-        user_id=user.id,
-        bucket_id=inbox.id,
+    uploads = [image] if has_image and image is not None else []
+    item = create_item(
+        db,
+        user,
         title=title,
         notes=notes,
         source=src,
-        status="open",
+        uploads=uploads,
     )
-    db.add(item)
-    db.flush()
-    if has_image and image is not None:
-        add_attachment(db, item, image)
     db.commit()
     return item_out(load_item(db, user, item.id))

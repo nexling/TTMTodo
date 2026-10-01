@@ -31,9 +31,17 @@ type Props = {
   onLogout: () => Promise<void> | void;
 };
 
+const TOKEN_SCOPES = [
+  { id: "inbox", label: "Inbox capture" },
+  { id: "items", label: "Items" },
+  { id: "buckets", label: "Buckets" },
+  { id: "plan", label: "Plan" },
+] as const;
+
 export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, organizationName }: Props) {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [tokenName, setTokenName] = useState("");
+  const [tokenScopes, setTokenScopes] = useState<string[]>(["inbox"]);
   const [freshToken, setFreshToken] = useState<string | null>(null);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [err, setErr] = useState("");
@@ -251,10 +259,19 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
 
   async function makeToken(e: FormEvent) {
     e.preventDefault();
-    const row = await api.createToken(tokenName.trim() || "capture");
+    const row = await api.createToken(tokenName.trim() || "capture", tokenScopes);
     setFreshToken(row.token ?? null);
     setTokenName("");
+    setTokenScopes(["inbox"]);
     await load();
+  }
+
+  function toggleTokenScope(id: string, on: boolean) {
+    setTokenScopes((prev) => {
+      if (on) return TOKEN_SCOPES.map((row) => row.id).filter((scope) => prev.includes(scope) || scope === id);
+      const next = prev.filter((scope) => scope !== id);
+      return next.length ? next : ["inbox"];
+    });
   }
 
   async function revoke(id: string) {
@@ -717,20 +734,21 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
         {isSiteAdmin ? <TestMailBox defaultEmail={userEmail} /> : null}
 
         <section className="panel">
-          <h2>Capture tokens</h2>
+          <h2>API tokens</h2>
           <p className="hint">
-            Phone shortcuts, a reMarkable bridge, or anything that can POST can dump into Inbox with a
-            bearer token. Siri uses the recipe below. Voice from Google Home uses Tasks/Keep further
-            down. The full token is shown only once.
+            Capture tokens dump into Inbox. Bot tokens can read and write buckets, items, and plan work
+            with the same rules as this account. Existing tokens stay inbox-only. The full token is shown
+            only once. Spec: <span className="mono">/docs</span> and{" "}
+            <span className="mono">/openapi.json</span> (signed in or with any valid token).
           </p>
           {freshToken ? (
             <div className="banner">
               Copy this token now: <span className="mono">{freshToken}</span>
             </div>
           ) : null}
-          <form className="composer-row" onSubmit={(e) => void makeToken(e)} style={{ marginBottom: 12 }}>
+          <form className="composer-row" onSubmit={(e) => void makeToken(e)} style={{ marginBottom: 12, flexWrap: "wrap" }}>
             <input
-              placeholder="Token name (phone, tasker…)"
+              placeholder="Token name (phone, grok…)"
               value={tokenName}
               onChange={(e) => setTokenName(e.target.value)}
               required
@@ -738,13 +756,36 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
             <button className="btn small" type="submit">
               Create token
             </button>
+            <button
+              className="btn ghost small"
+              type="button"
+              onClick={() => {
+                setTokenName((name) => name || "bot");
+                setTokenScopes(["items", "buckets"]);
+              }}
+            >
+              Bot preset
+            </button>
           </form>
+          <div className="token-scopes" style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+            {TOKEN_SCOPES.map((row) => (
+              <label key={row.id} className="hint" style={{ margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={tokenScopes.includes(row.id)}
+                  onChange={(e) => toggleTokenScope(row.id, e.target.checked)}
+                />{" "}
+                {row.label}
+              </label>
+            ))}
+          </div>
           {tokens.map((t) => (
             <div className="token-row" key={t.id}>
               <div>
                 <strong>{t.name}</strong>
                 <div className="hint" style={{ margin: 0 }}>
-                  {t.prefix}… {t.last_used_at ? `· last used ${new Date(t.last_used_at).toLocaleString()}` : "· unused"}
+                  {t.prefix}… {(t.scopes ?? ["inbox"]).join(", ")}{" "}
+                  {t.last_used_at ? `· last used ${new Date(t.last_used_at).toLocaleString()}` : "· unused"}
                 </div>
               </div>
               <button className="btn ghost small" onClick={() => void revoke(t.id)}>

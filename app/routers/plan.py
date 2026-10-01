@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.auth0 import SESSION_ORG_KEY
 from app.config import settings
 from app.database import get_db
-from app.deps import require_licensed
+from app.deps import require_licensed, require_scope
 from app.models import (
     Attachment,
     Department,
@@ -59,7 +59,8 @@ from app.plan import (
     user_department_ids,
     user_lead_department_ids,
 )
-from app.routers.items import collect_uploads
+from app.items import collect_uploads
+from app.orgs import active_membership, sole_licensed_organization_id, user_is_licensed
 from app.security import read_upload, store_upload, validate_color
 
 log = logging.getLogger("magictodo")
@@ -189,6 +190,20 @@ class TaskRescheduleIn(BaseModel):
 
 
 def _org(request: Request, user: User, db: Session) -> dict:
+    token = getattr(request.state, "api_token", None)
+    if token is not None:
+        header = (request.headers.get("x-organization-id") or "").strip() or None
+        org_id = header or sole_licensed_organization_id(db, user)
+        if not org_id:
+            raise HTTPException(status_code=400, detail="X-Organization-Id required")
+        if active_membership(db, user.id, org_id) is None:
+            raise HTTPException(status_code=404, detail="No organization")
+        if not user_is_licensed(db, user, org_id):
+            raise HTTPException(status_code=403, detail="unlicensed")
+        ctx = require_active_org(db, user, org_id)
+        if ctx["org_id"] != org_id:
+            raise HTTPException(status_code=404, detail="No organization")
+        return ctx
     return require_active_org(db, user, request.session.get(SESSION_ORG_KEY))
 
 
@@ -240,7 +255,7 @@ def _set_department_members(
 
 
 @router.get("/overview")
-def overview(request: Request, user: User = Depends(require_licensed), db: Session = Depends(get_db)):
+def overview(request: Request, user: User = Depends(require_scope("plan")), db: Session = Depends(get_db)):
     ctx = _org(request, user, db)
     org_id = ctx["org_id"]
     departments = list(
@@ -437,7 +452,7 @@ def department_work(
 def my_todos(
     request: Request,
     scope: str = Query(default="mine"),
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     if scope not in {"mine", "people", "department"}:
@@ -758,7 +773,7 @@ def delete_project(
 def get_project(
     project_id: str,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -796,7 +811,7 @@ def create_task(
     project_id: str,
     body: TaskIn,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -847,7 +862,7 @@ def update_task(
     task_id: str,
     body: TaskUpdate,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -904,7 +919,7 @@ def move_task(
     task_id: str,
     body: TaskMoveIn,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -926,7 +941,7 @@ def move_task(
 def related_tasks(
     task_id: str,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -943,7 +958,7 @@ def reschedule(
     task_id: str,
     body: TaskRescheduleIn,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -981,7 +996,7 @@ def reschedule(
 def delete_task(
     task_id: str,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -1002,7 +1017,7 @@ async def add_task_attachments(
     request: Request,
     image: UploadFile | None = File(default=None),
     file: UploadFile | None = File(default=None),
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
@@ -1035,7 +1050,7 @@ def delete_task_attachment(
     task_id: str,
     attachment_id: str,
     request: Request,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("plan")),
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)

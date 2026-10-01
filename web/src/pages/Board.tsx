@@ -925,6 +925,7 @@ export default function Board() {
 
   async function move(item: Item, dest: string) {
     if (item.plan_task_id || dest === item.bucket_id) return;
+    if (buckets.find((b) => b.id === dest)?.locked) return;
     await api.patchItem(item.id, { bucket_id: dest });
     await refreshAll();
   }
@@ -1231,6 +1232,7 @@ export default function Board() {
     if (!id) return;
     const item = findItem(items, id);
     if (!item || item.plan_task_id || item.parent_id || item.bucket_id === bucket.id) return;
+    if (bucket.locked) return;
     await move(item, bucket.id);
   }
 
@@ -1773,7 +1775,11 @@ export default function Board() {
 
         {error ? <p className="error">{error}</p> : null}
 
-        {viewDone ? null : (
+        {viewDone ? null : current?.locked ? (
+          <p className="hint">
+            These tasks come from the plan. Check them off here, or edit them on the plan board.
+          </p>
+        ) : (
         <form
           className={`composer${fileOver ? " file-over" : ""}`}
           onSubmit={(e) => void onCreate(e)}

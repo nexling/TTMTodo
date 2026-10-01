@@ -26,7 +26,7 @@ import pikepdf
 
 from app.config import settings
 from app.models import Bucket, Item, RemarkableImport, User
-from app.routers.items import add_attachment_bytes, next_sort_order, replace_item_image
+from app.items import add_attachment_bytes, create_item, replace_item_image
 from app.userfiles import remarkable_config_path, remarkable_key_path, remarkable_status_path
 
 log = logging.getLogger("magictodo")
@@ -629,17 +629,14 @@ def _pull(db: Session, user: User) -> dict:
                         row.updated_at = datetime.now(timezone.utc)
                         result["updated"] += 1
                     else:
-                        item = Item(
-                            user_id=user.id,
-                            bucket_id=inbox.id,
+                        item = create_item(
+                            db,
+                            user,
                             title=title,
                             notes=None,
                             source="remarkable",
-                            status="open",
-                            sort_order=next_sort_order(db, user, inbox.id, None, prepend=True),
+                            bucket_id=inbox.id,
                         )
-                        db.add(item)
-                        db.flush()
                         add_attachment_bytes(db, item, image_bytes, filename)
                         if row is None:
                             row = RemarkableImport(

@@ -451,7 +451,7 @@ def remove_plan_task_item(db: Session, task: PlanTask) -> None:
     if item is None:
         task.item_id = None
         return
-    from app.routers.items import delete_files
+    from app.items import delete_files
 
     bucket_id = item.bucket_id
     item.plan_task_id = None
@@ -463,7 +463,7 @@ def remove_plan_task_item(db: Session, task: PlanTask) -> None:
 
 
 def prune_stale_plan_inbox(db: Session) -> None:
-    from app.routers.items import delete_files
+    from app.items import delete_files
 
     buckets = list(db.scalars(select(Bucket).where(Bucket.plan_project_id.is_not(None))).all())
     removed = 0
@@ -536,22 +536,22 @@ def sync_plan_task_item(db: Session, task: PlanTask) -> None:
     color = dept.color if dept is not None else "#e8a54b"
     bucket = _assignee_project_bucket(db, assignee.id, project, color)
     if item is None:
-        from app.routers.items import next_sort_order
+        from app.items import create_item
 
-        item = Item(
-            user_id=assignee.id,
-            bucket_id=bucket.id,
+        item = create_item(
+            db,
+            assignee,
             title=task.title[:500],
             notes=task.notes,
+            bucket_id=bucket.id,
             source="plan",
             status=task.status,
             completed_at=task.completed_at,
             due_at=due_datetime(task.week_start, None),
-            sort_order=next_sort_order(db, assignee, bucket.id, None, prepend=True),
+            allow_locked_bucket=True,
+            plan_task_id=task.id,
+            sort_prepend=True,
         )
-        db.add(item)
-        db.flush()
-        item.plan_task_id = task.id
         task.item_id = item.id
         return
     item.title = task.title[:500]
@@ -660,6 +660,18 @@ def apply_item_due_to_plan(db: Session, item: Item) -> None:
     new_date = date_from_due_at(item.due_at)
     if task.week_start != new_date:
         task.week_start = new_date
+
+
+def apply_item_fields_to_plan(db: Session, item: Item) -> None:
+    if not item.plan_task_id:
+        return
+    task = db.get(PlanTask, item.plan_task_id)
+    if task is None:
+        item.plan_task_id = None
+        return
+    if item.title:
+        task.title = item.title[:500]
+    task.notes = item.notes
 
 
 def reschedule_task(
@@ -850,7 +862,7 @@ def serialize_task(
     pred_ids = task_predecessor_ids(db, task.id)
     blocked = not task_predecessors_done(db, task)
     person = assignee if assignee is not None else (db.get(User, task.assignee_user_id) if task.assignee_user_id else None)
-    from app.routers.items import attachment_out
+    from app.items import attachment_out
 
     payload = {
         "id": task.id,

@@ -10,7 +10,7 @@ from app.buckets import (
     would_cycle,
 )
 from app.database import get_db
-from app.deps import require_licensed
+from app.deps import require_scope
 from app.models import Bucket, Item, User
 from app.schemas import BucketIn, BucketOut, BucketUpdate, ReorderIn
 from app.security import validate_color
@@ -48,7 +48,7 @@ def _counts_for(db: Session, user_id: str, buckets: list[Bucket] | None = None) 
 
 
 @router.get("", response_model=list[BucketOut])
-def list_buckets(user: User = Depends(require_licensed), db: Session = Depends(get_db)):
+def list_buckets(user: User = Depends(require_scope("buckets")), db: Session = Depends(get_db)):
     buckets = user_buckets(db, user.id)
     counts = _counts_for(db, user.id, buckets)
     return [_to_out(b, counts) for b in buckets]
@@ -57,7 +57,7 @@ def list_buckets(user: User = Depends(require_licensed), db: Session = Depends(g
 @router.post("", response_model=BucketOut)
 def create_bucket(
     body: BucketIn,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("buckets")),
     db: Session = Depends(get_db),
 ):
     color = validate_color(body.color)
@@ -83,7 +83,7 @@ def create_bucket(
 @router.post("/reorder")
 def reorder_buckets(
     body: ReorderIn,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("buckets")),
     db: Session = Depends(get_db),
 ):
     loaded: list[Bucket] = []
@@ -105,7 +105,7 @@ def reorder_buckets(
 def update_bucket(
     bucket_id: str,
     body: BucketUpdate,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("buckets")),
     db: Session = Depends(get_db),
 ):
     bucket = db.get(Bucket, bucket_id)
@@ -148,7 +148,7 @@ def update_bucket(
 @router.delete("/{bucket_id}")
 def delete_bucket(
     bucket_id: str,
-    user: User = Depends(require_licensed),
+    user: User = Depends(require_scope("buckets")),
     db: Session = Depends(get_db),
 ):
     bucket = db.get(Bucket, bucket_id)

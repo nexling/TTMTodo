@@ -16,8 +16,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Bucket, GoogleImport, Item, User
-from app.routers.items import next_sort_order
+from app.models import Bucket, GoogleImport, User
+from app.items import create_item
 from app.userfiles import google_config_path, google_status_path
 
 log = logging.getLogger("magictodo")
@@ -532,17 +532,14 @@ def import_line(
     inbox = _inbox(db, user)
     try:
         with db.begin_nested():
-            item = Item(
-                user_id=user.id,
-                bucket_id=inbox.id,
+            item = create_item(
+                db,
+                user,
                 title=title[:500],
                 notes=(notes.strip() if notes else None) or None,
                 source=source[:32],
-                status="open",
-                sort_order=next_sort_order(db, user, inbox.id, None, prepend=True),
+                bucket_id=inbox.id,
             )
-            db.add(item)
-            db.flush()
             db.add(
                 GoogleImport(
                     user_id=user.id,

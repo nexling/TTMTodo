@@ -552,7 +552,9 @@ function ItemCard({
           onChange={(e) => onMove(item, e.target.value)}
           aria-label="Move to bucket"
         >
-          {walkBucketTree(buckets).map(({ bucket: b, depth: bucketDepth }) => (
+          {walkBucketTree(buckets)
+            .filter(({ bucket: b }) => !b.locked || b.id === item.bucket_id)
+            .map(({ bucket: b, depth: bucketDepth }) => (
             <option key={b.id} value={b.id}>
               {bucketOptionLabel(b, bucketDepth)}
             </option>
@@ -629,7 +631,7 @@ function ItemCard({
           Send to reMarkable
         </button>
       ) : null}
-      {addingStepFor !== item.id ? (
+      {addingStepFor !== item.id && !item.plan_task_id && !bucket?.locked ? (
         <button
           className="btn ghost small"
           onClick={() => {
@@ -640,6 +642,7 @@ function ItemCard({
           Add step
         </button>
       ) : null}
+      {item.plan_task_id ? null : (
       <button
         className="btn ghost small"
         onClick={() => {
@@ -649,6 +652,7 @@ function ItemCard({
       >
         Delete
       </button>
+      )}
     </>
   );
 

@@ -316,6 +316,7 @@ export type ApiToken = {
   id: string;
   name: string;
   prefix: string;
+  scopes: string[];
   created_at: string;
   last_used_at: string | null;
   token?: string | null;
@@ -582,11 +583,11 @@ export const api = {
       method: "DELETE",
     }),
   tokens: () => request<ApiToken[]>("/api/tokens"),
-  createToken: (name: string) =>
+  createToken: (name: string, scopes: string[] = ["inbox"]) =>
     request<ApiToken>("/api/tokens", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, scopes }),
     }),
   revokeToken: (id: string) => request<{ ok: boolean }>(`/api/tokens/${id}`, { method: "DELETE" }),
   remarkableStatus: () => request<RemarkableStatus>("/api/remarkable"),

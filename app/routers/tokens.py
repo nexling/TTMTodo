@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import require_licensed
+from app.deps import encode_token_scopes, parse_token_scopes, require_licensed
 from app.models import ApiToken, User
 from app.schemas import TokenCreateIn, TokenOut
 from app.security import hash_token, new_api_token, token_prefix
@@ -18,6 +18,7 @@ def _to_out(row: ApiToken, token: str | None = None) -> TokenOut:
         id=row.id,
         name=row.name,
         prefix=row.prefix,
+        scopes=parse_token_scopes(row.scopes),
         created_at=row.created_at,
         last_used_at=row.last_used_at,
         token=token,
@@ -46,6 +47,7 @@ def create_token(
         name=body.name.strip(),
         token_hash=hash_token(raw),
         prefix=token_prefix(raw),
+        scopes=encode_token_scopes(body.scopes),
     )
     db.add(row)
     db.commit()

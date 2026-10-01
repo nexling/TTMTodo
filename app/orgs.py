@@ -714,6 +714,29 @@ def get_user_context(db: Session, user_id: str, preferred_organization_id: str |
     }
 
 
+def licensed_organization_ids(db: Session, user: User) -> list[str]:
+    ctx = get_user_context(db, user.id)
+    if ctx is None:
+        return []
+    ids: list[str] = []
+    for row in ctx.get("organizations") or []:
+        access = row.get("license_access") or {}
+        if not access.get("is_licensed"):
+            continue
+        org = row.get("organization") or {}
+        org_id = org.get("id") or row.get("organization_id")
+        if org_id and org_id not in ids:
+            ids.append(org_id)
+    return ids
+
+
+def sole_licensed_organization_id(db: Session, user: User) -> str | None:
+    ids = licensed_organization_ids(db, user)
+    if len(ids) == 1:
+        return ids[0]
+    return None
+
+
 def user_is_licensed(db: Session, user: User, preferred_organization_id: str | None = None) -> bool:
     if not settings.auth0_is_enabled:
         return True

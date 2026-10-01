@@ -6,7 +6,7 @@ from app.auth0 import SESSION_ORG_KEY
 from app.bootstrap import ensure_inbox
 from app.config import settings
 from app.database import get_db
-from app.deps import get_session_user
+from app.deps import resolve_api_user
 from app.models import User
 from app.orgs import get_user_context, is_site_admin_email, user_is_licensed
 from app.schemas import LoginIn, SetupIn, UserOut
@@ -16,7 +16,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _status_payload(request: Request, user: User | None, db: Session) -> dict:
-    org_id = request.session.get(SESSION_ORG_KEY)
+    token = getattr(request.state, "api_token", None)
+    org_id = None if token is not None else request.session.get(SESSION_ORG_KEY)
     context = get_user_context(db, user.id, org_id) if user is not None else None
     licensed = False
     if user is not None:
@@ -43,7 +44,9 @@ def _status_payload(request: Request, user: User | None, db: Session) -> dict:
 
 @router.get("/status")
 def auth_status(
-    request: Request, user: User | None = Depends(get_session_user), db: Session = Depends(get_db)
+    request: Request,
+    user: User | None = Depends(resolve_api_user),
+    db: Session = Depends(get_db),
 ):
     return _status_payload(request, user, db)
 

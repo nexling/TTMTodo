@@ -72,6 +72,7 @@ def migrate_schema() -> None:
     _migrate_plan_task_notify_days()
     _migrate_invitation_unique()
     _migrate_plan_task_parent()
+    _migrate_api_token_scopes()
 
 
 def _migrate_user_admin() -> None:
@@ -352,6 +353,18 @@ def _migrate_plan_task_parent() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE plan_tasks ADD COLUMN parent_id VARCHAR(36)"))
     log.info("Added plan_tasks.parent_id")
+
+
+def _migrate_api_token_scopes() -> None:
+    inspector = inspect(engine)
+    if "api_tokens" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("api_tokens")}
+    if "scopes" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE api_tokens ADD COLUMN scopes VARCHAR(120) NOT NULL DEFAULT '[\"inbox\"]'"))
+    log.info("Added api_tokens.scopes")
 
 
 def _backfill_plan_bucket_nesting() -> None:

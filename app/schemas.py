@@ -106,9 +106,21 @@ class InboxCaptureIn(BaseModel):
     source: str | None = "api"
 
 
+API_SCOPES = ("inbox", "items", "buckets", "plan")
 REMINDER_LEAD_MINUTES = (15, 60, 1440, 2880, 4320, 10080)
 RECUR_UNITS = ("day", "week", "month", "year")
 MAX_NEST_DEPTH = 20
+LOCKED_BUCKET_DETAIL = "Organization and project folders only hold plan tasks"
+PLAN_MIRROR_DELETE_DETAIL = "Delete this task from the plan, not from the bucket"
+
+
+class ItemCreate(BaseModel):
+    title: str | None = Field(default=None, max_length=500)
+    notes: str | None = None
+    bucket_id: str | None = None
+    parent_id: str | None = None
+    source: str | None = Field(default="api", max_length=32)
+    due_at: datetime | None = None
 
 
 class ItemUpdate(BaseModel):
@@ -144,12 +156,14 @@ class PushUnsubscribeIn(BaseModel):
 
 class TokenCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+    scopes: list[str] | None = None
 
 
 class TokenOut(BaseModel):
     id: str
     name: str
     prefix: str
+    scopes: list[str] = ["inbox"]
     created_at: datetime
     last_used_at: datetime | None
     token: str | None = None

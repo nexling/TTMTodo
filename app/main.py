@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import select
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -15,12 +16,12 @@ from app.bootstrap import bootstrap
 from app.session import SchemeAwareSessionMiddleware
 from app.config import settings
 from app.database import get_db
-from app.deps import get_session_user
-from app.models import Bucket, Item, User
+from app.deps import get_session_user, require_docs_user
+from app.items import create_item
+from app.models import User
 from app.orgs import user_is_licensed
 from app.live import router as live_router, set_loop
 from app.routers import admin, auth, buckets, calendar_export, files, google, ical, inbox, items, notifications, orgs, outlook, plan, remarkable, push, tokens
-from app.routers.items import add_attachment
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("magictodo")
@@ -41,7 +42,7 @@ async def lifespan(_app: FastAPI):
         set_loop(None)
 
 
-app = FastAPI(title="TTM-Todo", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="TTM-Todo", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.add_middleware(
     SchemeAwareSessionMiddleware,
     secret_key=settings.secret_key,
@@ -74,6 +75,63 @@ app.include_router(notifications.router)
 app.include_router(live_router)
 
 
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title="TTM-Todo",
+        version="1.0.0",
+        description=(
+            "Items live in personal buckets. Org/project folders are plan mirrors. "
+            "Bearer tokens (`mt_…`) use scopes `inbox`, `items`, `buckets`, and `plan`. "
+            "Plan calls send `X-Organization-Id` when the user belongs to more than one licensed org. "
+            "Existing capture tokens are inbox-only."
+        ),
+        routes=app.routes,
+    )
+    schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    schemes["HTTPBearer"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API token from Settings (`mt_…`). Scopes: inbox, items, buckets, plan.",
+    }
+    schema["security"] = [{"HTTPBearer": []}]
+    org_header = {
+        "name": "X-Organization-Id",
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string"},
+        "description": "Required for plan calls when the user has more than one licensed organization.",
+    }
+    for path, ops in schema.get("paths", {}).items():
+        if not path.startswith("/api/plan"):
+            continue
+        if not isinstance(ops, dict):
+            continue
+        for op in ops.values():
+            if not isinstance(op, dict):
+                continue
+            params = op.setdefault("parameters", [])
+            if any(isinstance(p, dict) and p.get("name") == "X-Organization-Id" for p in params):
+                continue
+            params.append(org_header)
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
+
+
+@app.get("/openapi.json", include_in_schema=False)
+def openapi_json(_user: User = Depends(require_docs_user)):
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_docs(_user: User = Depends(require_docs_user)):
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="TTM-Todo API")
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
@@ -101,12 +159,6 @@ async def share_target(
     if not combined and not has_image:
         return RedirectResponse("/", status_code=303)
 
-    inbox = db.scalar(
-        select(Bucket).where(Bucket.user_id == user.id, Bucket.is_inbox.is_(True))
-    )
-    if inbox is None:
-        raise HTTPException(status_code=500, detail="Inbox missing")
-
     item_title = None
     notes = None
     if combined:
@@ -117,18 +169,15 @@ async def share_target(
         else:
             item_title = combined[:500]
 
-    item = Item(
-        user_id=user.id,
-        bucket_id=inbox.id,
+    uploads = [image] if has_image and image is not None else []
+    create_item(
+        db,
+        user,
         title=item_title,
         notes=notes,
         source="share",
-        status="open",
+        uploads=uploads,
     )
-    db.add(item)
-    db.flush()
-    if has_image:
-        add_attachment(db, item, image)
     db.commit()
     return RedirectResponse("/", status_code=303)
 
