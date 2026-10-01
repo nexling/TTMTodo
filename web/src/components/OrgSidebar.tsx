@@ -1,13 +1,12 @@
 import { Link } from "react-router-dom";
+import OrgNavLinks from "./OrgNavLinks";
 import SidebarResizeHandle from "./SidebarResizeHandle";
-import { useDepartmentWorkNav } from "../planAccess";
 
 export default function OrgSidebar({
   active,
 }: {
   active: "org" | "project" | "template" | "department" | "todos";
 }) {
-  const showDepartmentWork = useDepartmentWorkNav();
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -27,17 +26,7 @@ export default function OrgSidebar({
       <Link className="bucket-link" to="/calendar">
         Calendar
       </Link>
-      <Link className={`bucket-link${active === "org" ? " active" : ""}`} to="/org">
-        Organization
-      </Link>
-      {showDepartmentWork ? (
-        <Link className={`bucket-link${active === "department" ? " active" : ""}`} to="/org/departments">
-          Org: All Projects
-        </Link>
-      ) : null}
-      <Link className={`bucket-link${active === "todos" ? " active" : ""}`} to="/org/my-todos">
-        My Org Todo's
-      </Link>
+      <OrgNavLinks active={active} />
       <div className="sidebar-foot">
         <Link className="nav-btn" to="/settings">
           Settings

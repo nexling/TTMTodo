@@ -319,7 +319,9 @@ def task_successor_ids(db: Session, task_id: str) -> list[str]:
     )
 
 
-def _walk_undone_related(db: Session, start_ids: list[str], skip_id: str, outgoing: bool) -> list[PlanTask]:
+def _walk_related(
+    db: Session, start_ids: list[str], skip_id: str, outgoing: bool, *, include_done: bool
+) -> list[PlanTask]:
     found: list[PlanTask] = []
     seen: set[str] = set()
     queue = list(start_ids)
@@ -329,7 +331,9 @@ def _walk_undone_related(db: Session, start_ids: list[str], skip_id: str, outgoi
             continue
         seen.add(task_id)
         row = db.get(PlanTask, task_id)
-        if row is None or row.status == "done":
+        if row is None:
+            continue
+        if not include_done and row.status == "done":
             continue
         found.append(row)
         nxt = task_successor_ids(db, task_id) if outgoing else task_predecessor_ids(db, task_id)
@@ -339,8 +343,15 @@ def _walk_undone_related(db: Session, start_ids: list[str], skip_id: str, outgoi
 
 def related_undone(db: Session, task: PlanTask) -> dict[str, list[PlanTask]]:
     return {
-        "upstream": _walk_undone_related(db, task_predecessor_ids(db, task.id), task.id, outgoing=False),
-        "following": _walk_undone_related(db, task_successor_ids(db, task.id), task.id, outgoing=True),
+        "upstream": _walk_related(db, task_predecessor_ids(db, task.id), task.id, outgoing=False, include_done=False),
+        "following": _walk_related(db, task_successor_ids(db, task.id), task.id, outgoing=True, include_done=False),
+    }
+
+
+def related_connected(db: Session, task: PlanTask) -> dict[str, list[PlanTask]]:
+    return {
+        "upstream": _walk_related(db, task_predecessor_ids(db, task.id), task.id, outgoing=False, include_done=True),
+        "following": _walk_related(db, task_successor_ids(db, task.id), task.id, outgoing=True, include_done=True),
     }
 
 

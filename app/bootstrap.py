@@ -465,6 +465,16 @@ def _delete_empty_helena_user() -> None:
         log.info("Deleted unused Helena user")
 
 
+def _purge_empty_personal_organizations() -> None:
+    from app.orgs import purge_empty_personal_organizations
+
+    with SessionLocal() as db:
+        removed = purge_empty_personal_organizations(db)
+        db.commit()
+        if removed:
+            log.info("Removed %s empty personal organization(s)", removed)
+
+
 def bootstrap() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
@@ -472,6 +482,7 @@ def bootstrap() -> None:
     migrate_schema()
     ensure_vapid_keys()
     _delete_empty_helena_user()
+    _purge_empty_personal_organizations()
 
     with SessionLocal() as db:
         from app.plan import prune_stale_plan_inbox

@@ -836,6 +836,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   planTaskRelated: (id: string) => request<PlanRelated>(`/api/plan/tasks/${id}/related`),
+  planTaskConnected: (id: string) => request<PlanRelated>(`/api/plan/tasks/${id}/connected`),
   reschedulePlanTask: (
     id: string,
     body: {

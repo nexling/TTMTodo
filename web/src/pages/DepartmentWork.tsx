@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Membership, type PlanDepartmentWork, type PlanSubtask, type PlanTask } from "../api";
 import { useLiveReload } from "../live";
@@ -9,6 +9,16 @@ import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type Plan
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
 import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
+import { ShowConnectedBanner, ShowConnectedMenuItem } from "../components/ShowConnected";
+import {
+  connectedChipClass,
+  connectedGridClick,
+  hiddenConnectedCount,
+  paintedIdsFromCells,
+  useConnectedOverlay,
+  useLiveConnectedMenu,
+  type ConnectedIds,
+} from "../planConnected";
 import { useWhoColumnWidth } from "../planWhoWidth";
 import { usePlanView } from "../planWorkload";
 import { projectSpans } from "../planSpan";
@@ -93,6 +103,7 @@ export default function DepartmentWork() {
   const gridWrapRef = useRef<HTMLDivElement>(null);
   const scrolledKey = useRef<string | null>(null);
   const [editing, setEditing] = useState<PlanTask | null>(null);
+  const [titleFocusGen, setTitleFocusGen] = useState(0);
   const [draft, setDraft] = useState({
     title: "",
     notes: "",
@@ -109,6 +120,11 @@ export default function DepartmentWork() {
   const [lightbox, setLightbox] = useState<Lightbox | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
   const [deptMenu, setDeptMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const { taskMenu, closeTaskMenu, onTaskContextMenu: openConnectedMenu } = useLiveConnectedMenu();
+  const { connected, showConnected, hideConnected } = useConnectedOverlay(gridWrapRef, [
+    planView,
+    focusDepartmentId,
+  ]);
   const leadIds = data?.lead_department_ids ?? [];
   const lead = leadIds.length > 0;
   const admin = Boolean(data?.capabilities.can_manage_project_work || data?.capabilities.can_manage_plan);
@@ -142,6 +158,10 @@ export default function DepartmentWork() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    hideConnected();
+  }, [focusDepartmentId, hideConnected]);
 
   useLiveReload(
     (event) => event.channel === "plan",
@@ -233,8 +253,21 @@ export default function DepartmentWork() {
   }
 
   function startPickingDeps() {
+    hideConnected();
     pickSnapshot.current = draft.predecessor_ids;
     setPickingDeps(true);
+  }
+
+  function beginShowConnected(chain: ConnectedIds) {
+    if (pickingDeps) cancelPickedDeps();
+    setPlanView("cards");
+    showConnected(chain);
+    closeTaskMenu();
+  }
+
+  function onTaskContextMenu(e: MouseEvent<HTMLButtonElement>, task: PlanTask) {
+    setDeptMenu(null);
+    openConnectedMenu(e, task);
   }
 
   function togglePickedDep(taskId: string) {
@@ -274,6 +307,9 @@ export default function DepartmentWork() {
       if (!editing || task.project_id !== editing.project_id) return;
       togglePickedDep(task.id);
       return;
+    }
+    if (!editing || editing.id !== task.id) {
+      setTitleFocusGen((n) => n + 1);
     }
     setSubtaskDraft({ title: "", assignee_user_id: "" });
     setEditing(task);
@@ -449,8 +485,10 @@ export default function DepartmentWork() {
       : []
     : departmentBoardRows(data?.departments ?? [], canManageWork);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
-  const showBars = planView === "bars" && !pickingDeps;
-  const showProjects = planView === "projects" && !pickingDeps;
+  const showBars = planView === "bars" && !pickingDeps && !connected;
+  const showProjects = planView === "projects" && !pickingDeps && !connected;
+  const paintedIds = useMemo(() => paintedIdsFromCells(tasksByCell), [tasksByCell]);
+  const hiddenConnected = connected ? hiddenConnectedCount(connected, paintedIds) : 0;
 
   return (
     <div className="shell">
@@ -524,10 +562,14 @@ export default function DepartmentWork() {
           </p>
         ) : null}
         {focusMissing ? <p className="error">That department is not in Org: All Projects.</p> : null}
+        {connected ? <ShowConnectedBanner hiddenCount={hiddenConnected} onDismiss={hideConnected} /> : null}
         {data && !focusMissing && (focusDept || data.departments.length > 0 || canManageWork) ? (
           <div
             ref={gridWrapRef}
-            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}`}
+            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}`}
+            onClick={(e) => {
+              if (connected) connectedGridClick(e, hideConnected);
+            }}
             style={
               focusDepartmentId && whoColumn.width != null
                 ? { ["--plan-dept-col" as string]: `${whoColumn.width}px` }
@@ -577,6 +619,7 @@ export default function DepartmentWork() {
                       if (!row.navigable || !row.departmentId) return;
                       e.preventDefault();
                       e.stopPropagation();
+                      closeTaskMenu();
                       setDeptMenu({ id: row.departmentId, x: e.clientX, y: e.clientY });
                     }}
                   >
@@ -601,9 +644,10 @@ export default function DepartmentWork() {
                             <button
                               key={task.id}
                               type="button"
-                              className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${pickingDeps && sameProject && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editing?.id ? " dep-source" : ""}`}
+                              className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${pickingDeps && sameProject && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editing?.id ? " dep-source" : ""}${connectedChipClass(task.id, connected)}`}
                               style={{ background: `color-mix(in srgb, ${row.color} 28%, var(--bg-card))` }}
                               onClick={() => openEdit(task)}
+                              onContextMenu={(e) => onTaskContextMenu(e, task)}
                             >
                               <span className="plan-chip-who">{task.project_name || "Project"}</span>
                               <span className="plan-chip-title">{task.title}</span>
@@ -639,6 +683,7 @@ export default function DepartmentWork() {
           <PlanTaskEditor
             editing={editing}
             pickingDeps={pickingDeps}
+            titleFocusGen={titleFocusGen}
             draft={draft}
             onDraftChange={setDraft}
             canEdit={canManageTask(editing)}
@@ -677,6 +722,27 @@ export default function DepartmentWork() {
         ) : null}
         {lightbox ? <LightboxOverlay lightbox={lightbox} onClose={() => setLightbox(null)} /> : null}
         <DepartmentViewMenu menu={deptMenu} onOpen={openDepartment} onClose={() => setDeptMenu(null)} />
+        {taskMenu ? (
+          <div
+            className="color-menu"
+            style={{
+              left: Math.max(12, Math.min(taskMenu.x, window.innerWidth - 180)),
+              top: Math.max(12, Math.min(taskMenu.y, window.innerHeight - 80)),
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <ShowConnectedMenuItem
+              isSource={connected?.sourceId === taskMenu.task.id}
+              chain={taskMenu.chain}
+              onShow={beginShowConnected}
+              onHide={() => {
+                hideConnected();
+                closeTaskMenu();
+              }}
+            />
+          </div>
+        ) : null}
       </main>
     </div>
   );

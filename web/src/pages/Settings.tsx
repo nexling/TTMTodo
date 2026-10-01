@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, mailFailureHint, type ApiToken, type Bucket, type CalendarExportStatus, type GoogleStatus, type IcalStatus, type Invitation, type Membership, type NotificationPreferences, type OrgSettings, type OutlookStatus, type RemarkableStatus } from "../api";
+import { useHasOrganization } from "../authStatus";
 import { walkBucketTree } from "../bucketTree";
 import { roleLabel } from "../roles";
 import ColorPicker, { COLOR_PALETTE } from "../components/ColorPicker";
@@ -39,6 +40,7 @@ const TOKEN_SCOPES = [
 ] as const;
 
 export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, organizationName }: Props) {
+  const hasOrganization = useHasOrganization();
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [tokenName, setTokenName] = useState("");
   const [tokenScopes, setTokenScopes] = useState<string[]>(["inbox"]);
@@ -577,9 +579,11 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
         <Link className="nav-btn" to="/calendar">
           Calendar
         </Link>
-        <Link className="nav-btn" to="/org">
-          Organization
-        </Link>
+        {hasOrganization ? (
+          <Link className="nav-btn" to="/org">
+            Organization
+          </Link>
+        ) : null}
         <div className="sidebar-foot">
           <p className="hint" style={{ margin: 0 }}>
             Signed in as {username}

@@ -28,7 +28,7 @@ import { bucketOptionLabel, walkBucketTree } from "../bucketTree";
 import { saveItemWithPlanDue } from "../planDue";
 import { useLiveReload } from "../live";
 import SidebarResizeHandle from "../components/SidebarResizeHandle";
-import { useDepartmentWorkNav } from "../planAccess";
+import OrgNavLinks from "../components/OrgNavLinks";
 
 const CAL_VIEW_KEY = "magictodo:cal-view";
 const CAL_BUCKET_KEY = "magictodo:cal-add-bucket";
@@ -438,7 +438,6 @@ function minutesFromMidnight(d: Date): number {
 
 export default function Calendar() {
   const navigate = useNavigate();
-  const showDepartmentWork = useDepartmentWorkNav();
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [outlook, setOutlook] = useState<OutlookEvent[]>([]);
@@ -984,17 +983,7 @@ export default function Calendar() {
         <Link className="bucket-link active" to="/calendar" onClick={() => setMenuOpen(false)}>
           Calendar
         </Link>
-        <Link className="bucket-link" to="/org" onClick={() => setMenuOpen(false)}>
-          Organization
-        </Link>
-        {showDepartmentWork ? (
-          <Link className="bucket-link" to="/org/departments" onClick={() => setMenuOpen(false)}>
-            Org: All Projects
-          </Link>
-        ) : null}
-        <Link className="bucket-link" to="/org/my-todos" onClick={() => setMenuOpen(false)}>
-          My Org Todo's
-        </Link>
+        <OrgNavLinks onNavigate={() => setMenuOpen(false)} />
         {walkBucketTree(buckets).map(({ bucket: b, depth }) => (
           <Link
             key={b.id}

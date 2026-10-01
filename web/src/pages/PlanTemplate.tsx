@@ -1,7 +1,18 @@
-import { type DragEvent, type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, type FormEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type PlanDepartment, type PlanTemplateTask } from "../api";
 import OrgSidebar from "../components/OrgSidebar";
+import { focusPlanTitleInput } from "../components/PlanTaskEditor";
+import { ShowConnectedBanner, ShowConnectedMenuItem } from "../components/ShowConnected";
+import {
+  connectedChipClass,
+  connectedGridClick,
+  hiddenConnectedCount,
+  paintedKeysFromCells,
+  useConnectedOverlay,
+  walkTemplateConnected,
+  type ConnectedIds,
+} from "../planConnected";
 import { applyDepartmentSort, cellInsertBeforeId, nextDeptSort, orderDepartmentIds } from "../planOrder";
 import {
   ZOOM_OPTIONS,
@@ -73,6 +84,7 @@ export default function PlanTemplatePage() {
   const [dropKey, setDropKey] = useState<string | null>(null);
   const [dropChipKey, setDropChipKey] = useState<string | null>(null);
   const [editing, setEditing] = useState<DraftTask | "new" | null>(null);
+  const [titleFocusGen, setTitleFocusGen] = useState(0);
   const [draft, setDraft] = useState({
     title: "",
     notes: "",
@@ -84,9 +96,17 @@ export default function PlanTemplatePage() {
   const draggingKey = useRef<string | null>(null);
   const gridWrapRef = useRef<HTMLDivElement>(null);
   const scrolledKey = useRef<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const [pickingDeps, setPickingDeps] = useState(false);
   const pickSnapshot = useRef<string[]>([]);
+  const [taskMenu, setTaskMenu] = useState<{ task: DraftTask; x: number; y: number; chain: ConnectedIds } | null>(null);
+  const { connected, showConnected, hideConnected } = useConnectedOverlay(gridWrapRef);
   const unit = templateUnit(zoom);
+
+  useLayoutEffect(() => {
+    if (titleFocusGen === 0) return;
+    focusPlanTitleInput(titleRef.current);
+  }, [titleFocusGen]);
 
   async function load() {
     if (!templateId) return;
@@ -108,6 +128,36 @@ export default function PlanTemplatePage() {
   useEffect(() => {
     void load();
   }, [templateId]);
+
+  useEffect(() => {
+    hideConnected();
+    setTaskMenu(null);
+  }, [templateId, hideConnected]);
+
+  useEffect(() => {
+    if (!taskMenu) return;
+    function close() {
+      setTaskMenu(null);
+    }
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") close();
+    }
+    function onContext(e: Event) {
+      e.preventDefault();
+      close();
+    }
+    const timer = window.setTimeout(() => {
+      window.addEventListener("click", close);
+      window.addEventListener("contextmenu", onContext);
+      window.addEventListener("keydown", onKey);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", onContext);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [taskMenu]);
 
   const columns = useMemo(
     () => templateColumnsSpanning(tasks.map((task) => templateColOf(task.day_offset, zoom))),
@@ -204,8 +254,21 @@ export default function PlanTemplatePage() {
   }
 
   function startPickingDeps() {
+    hideConnected();
     pickSnapshot.current = draft.predecessor_keys;
     setPickingDeps(true);
+  }
+
+  function beginShowConnected(chain: ConnectedIds) {
+    if (pickingDeps) cancelPickedDeps();
+    showConnected(chain);
+    setTaskMenu(null);
+  }
+
+  function onTaskContextMenu(e: MouseEvent<HTMLButtonElement>, task: DraftTask) {
+    e.preventDefault();
+    e.stopPropagation();
+    setTaskMenu({ task, x: e.clientX, y: e.clientY, chain: walkTemplateConnected(task, tasks) });
   }
 
   function togglePickedDep(task: DraftTask) {
@@ -243,6 +306,7 @@ export default function PlanTemplatePage() {
 
   function openNew(departmentId: string, col: number) {
     if (!canEdit || pickingDeps) return;
+    setTitleFocusGen((n) => n + 1);
     setEditing("new");
     setDraft({
       title: "",
@@ -258,6 +322,9 @@ export default function PlanTemplatePage() {
     if (pickingDeps) {
       togglePickedDep(task);
       return;
+    }
+    if (editing === "new" || !editing || editing.key !== task.key) {
+      setTitleFocusGen((n) => n + 1);
     }
     setEditing(task);
     setDraft({
@@ -391,6 +458,8 @@ export default function PlanTemplatePage() {
     () => tasks.reduce((max, task) => Math.max(max, templateColOf(task.day_offset, zoom)), 0),
     [tasks, zoom],
   );
+  const paintedKeys = useMemo(() => paintedKeysFromCells(tasksByCell), [tasksByCell]);
+  const hiddenConnected = connected ? hiddenConnectedCount(connected, paintedKeys) : 0;
   const spanOffset = useMemo(() => {
     let max = 0;
     for (const task of tasks) {
@@ -510,10 +579,17 @@ export default function PlanTemplatePage() {
         </div>
         {error ? <p className="error">{error}</p> : null}
         {busy ? <p className="hint">Saving…</p> : null}
+        {connected ? <ShowConnectedBanner hiddenCount={hiddenConnected} onDismiss={hideConnected} /> : null}
         {!loaded ? (
           <p className="hint">Loading…</p>
         ) : (
-          <div ref={gridWrapRef} className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}`}>
+          <div
+            ref={gridWrapRef}
+            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}`}
+            onClick={(e) => {
+              if (connected) connectedGridClick(e, hideConnected);
+            }}
+          >
             <div
               className="plan-grid"
               style={{
@@ -564,7 +640,7 @@ export default function PlanTemplatePage() {
                           <button
                             key={task.key}
                             type="button"
-                            className={`plan-chip${task.predecessor_keys.length ? " blocked" : ""}${pickingDeps && isPickedDep(task) ? " dep-picked" : ""}${pickingDeps && task.key === editingTaskKey() ? " dep-source" : ""}${dropChipKey === task.key ? " drop-before" : ""}`}
+                            className={`plan-chip${task.predecessor_keys.length ? " blocked" : ""}${pickingDeps && isPickedDep(task) ? " dep-picked" : ""}${pickingDeps && task.key === editingTaskKey() ? " dep-source" : ""}${dropChipKey === task.key ? " drop-before" : ""}${connectedChipClass(task.key, connected)}`}
                             style={{ background: `color-mix(in srgb, ${dept.color} 28%, var(--bg-card))` }}
                             draggable={canEdit && !pickingDeps}
                             onDragStart={(e) => onTaskDragStart(e, task)}
@@ -592,6 +668,7 @@ export default function PlanTemplatePage() {
                               void onCellDrop(e, deptId, col, task.key);
                             }}
                             onClick={() => openEdit(task)}
+                            onContextMenu={(e) => onTaskContextMenu(e, task)}
                           >
                             <span className="plan-chip-title">{task.title || "Untitled"}</span>
                             {task.predecessor_keys.length ? (
@@ -646,6 +723,7 @@ export default function PlanTemplatePage() {
               <label>
                 Title
                 <input
+                  ref={titleRef}
                   value={draft.title}
                   onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                   required
@@ -745,6 +823,27 @@ export default function PlanTemplatePage() {
                 </button>
               </div>
             </form>
+          </div>
+        ) : null}
+        {taskMenu ? (
+          <div
+            className="color-menu"
+            style={{
+              left: Math.max(12, Math.min(taskMenu.x, window.innerWidth - 180)),
+              top: Math.max(12, Math.min(taskMenu.y, window.innerHeight - 80)),
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <ShowConnectedMenuItem
+              isSource={connected?.sourceId === taskMenu.task.key}
+              chain={taskMenu.chain}
+              onShow={beginShowConnected}
+              onHide={() => {
+                hideConnected();
+                setTaskMenu(null);
+              }}
+            />
           </div>
         ) : null}
       </main>

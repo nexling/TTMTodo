@@ -8,7 +8,17 @@ import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
 import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import { LightboxOverlay, lightboxFor, type Lightbox } from "../components/ItemCard";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
+import { ShowConnectedBanner, ShowConnectedMenuItem } from "../components/ShowConnected";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
+import {
+  connectedChipClass,
+  connectedGridClick,
+  hiddenConnectedCount,
+  paintedIdsFromCells,
+  useConnectedOverlay,
+  useLiveConnectedMenu,
+  type ConnectedIds,
+} from "../planConnected";
 import { cellInsertBeforeId } from "../planOrder";
 import { projectSpans } from "../planSpan";
 import { useWhoColumnWidth } from "../planWhoWidth";
@@ -136,6 +146,7 @@ export default function PlanBoard() {
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState<PlanZoom>(() => readZoom(ZOOM_KEY));
   const [editing, setEditing] = useState<PlanTask | "new" | null>(null);
+  const [titleFocusGen, setTitleFocusGen] = useState(0);
   const [draft, setDraft] = useState({
     title: "",
     notes: "",
@@ -156,9 +167,14 @@ export default function PlanBoard() {
   const [projectName, setProjectName] = useState("");
   const [lightbox, setLightbox] = useState<Lightbox | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
-  const [taskMenu, setTaskMenu] = useState<{ task: PlanTask; x: number; y: number } | null>(null);
-  const [deptMenu, setDeptMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [hideDone, setHideDone] = useState(() => readHideDone(projectId));
+  const { taskMenu, setTaskMenu, closeTaskMenu, onTaskContextMenu: openConnectedMenu } = useLiveConnectedMenu();
+  const { connected, showConnected, hideConnected } = useConnectedOverlay(gridWrapRef, [
+    planView,
+    hideDone,
+    focusDepartmentId,
+  ]);
+  const [deptMenu, setDeptMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [subtaskDraft, setSubtaskDraft] = useState({ title: "", assignee_user_id: "" });
   const admin = Boolean(data?.capabilities.can_manage_plan);
   const canManageWork = Boolean(data?.capabilities.can_manage_project_work || admin);
@@ -209,29 +225,8 @@ export default function PlanBoard() {
   }, [projectId]);
 
   useEffect(() => {
-    if (!taskMenu) return;
-    function close() {
-      setTaskMenu(null);
-    }
-    function onKey(e: globalThis.KeyboardEvent) {
-      if (e.key === "Escape") close();
-    }
-    function onContext(e: Event) {
-      e.preventDefault();
-      close();
-    }
-    const timer = window.setTimeout(() => {
-      window.addEventListener("click", close);
-      window.addEventListener("contextmenu", onContext);
-      window.addEventListener("keydown", onKey);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("click", close);
-      window.removeEventListener("contextmenu", onContext);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [taskMenu]);
+    hideConnected();
+  }, [projectId, hideConnected]);
 
   const columns = useMemo(() => {
     const dates: string[] = [];
@@ -320,8 +315,16 @@ export default function PlanBoard() {
   }
 
   function startPickingDeps() {
+    hideConnected();
     pickSnapshot.current = draft.predecessor_ids;
     setPickingDeps(true);
+  }
+
+  function beginShowConnected(chain: ConnectedIds) {
+    if (pickingDeps) cancelPickedDeps();
+    setPlanView("cards");
+    showConnected(chain);
+    closeTaskMenu();
   }
 
   function togglePickedDep(taskId: string) {
@@ -390,6 +393,7 @@ export default function PlanBoard() {
   function openNew(departmentId: string | null, col: Date, assigneeUserId?: string | null) {
     if (!canManageDept(departmentId) || pickingDeps) return;
     setTaskMenu(null);
+    setTitleFocusGen((n) => n + 1);
     setEditing("new");
     setDraft({
       title: "",
@@ -406,6 +410,9 @@ export default function PlanBoard() {
     if (pickingDeps) {
       togglePickedDep(task.id);
       return;
+    }
+    if (editing === "new" || !editing || editing.id !== task.id) {
+      setTitleFocusGen((n) => n + 1);
     }
     setTaskMenu(null);
     setSubtaskDraft({ title: "", assignee_user_id: "" });
@@ -507,12 +514,8 @@ export default function PlanBoard() {
   }
 
   function onTaskContextMenu(e: MouseEvent<HTMLButtonElement>, task: PlanTask) {
-    if (pickingDeps) return;
-    if (!canToggleTaskStatus(task) && !canManageTask(task)) return;
-    e.preventDefault();
-    e.stopPropagation();
     setDeptMenu(null);
-    setTaskMenu({ task, x: e.clientX, y: e.clientY });
+    openConnectedMenu(e, task);
   }
 
   async function addSubtask(parent: PlanTask) {
@@ -697,8 +700,10 @@ export default function PlanBoard() {
       : []
     : departmentBoardRows(data?.departments ?? [], true);
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
-  const showBars = planView === "bars" && !pickingDeps;
-  const showProjects = planView === "projects" && !pickingDeps;
+  const showBars = planView === "bars" && !pickingDeps && !connected;
+  const showProjects = planView === "projects" && !pickingDeps && !connected;
+  const paintedIds = useMemo(() => paintedIdsFromCells(tasksByCell), [tasksByCell]);
+  const hiddenConnected = connected ? hiddenConnectedCount(connected, paintedIds) : 0;
 
   return (
     <div className="shell">
@@ -780,12 +785,16 @@ export default function PlanBoard() {
           />
         ) : null}
         {focusMissing ? <p className="error">That department is not on this project.</p> : null}
+        {connected ? <ShowConnectedBanner hiddenCount={hiddenConnected} onDismiss={hideConnected} /> : null}
         {!data ? (
           <p className="hint">Loading…</p>
         ) : focusMissing ? null : (
           <div
             ref={gridWrapRef}
-            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}`}
+            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}`}
+            onClick={(e) => {
+              if (connected) connectedGridClick(e, hideConnected);
+            }}
             style={
               focusDepartmentId && whoColumn.width != null
                 ? { ["--plan-dept-col" as string]: `${whoColumn.width}px` }
@@ -887,7 +896,7 @@ export default function PlanBoard() {
                           <button
                             key={task.id}
                             type="button"
-                            className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${pickingDeps && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editingTaskId() ? " dep-source" : ""}${dropChipId === task.id ? " drop-before" : ""}`}
+                            className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${pickingDeps && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editingTaskId() ? " dep-source" : ""}${dropChipId === task.id ? " drop-before" : ""}${connectedChipClass(task.id, connected)}`}
                             style={
                               task.status === "done"
                                 ? undefined
@@ -959,6 +968,7 @@ export default function PlanBoard() {
           <PlanTaskEditor
             editing={editing}
             pickingDeps={pickingDeps}
+            titleFocusGen={titleFocusGen}
             draft={draft}
             onDraftChange={setDraft}
             canEdit={editing === "new" ? canManageDept(draft.department_id || null) : canManageTask(editing)}
@@ -1007,7 +1017,7 @@ export default function PlanBoard() {
             className="color-menu"
             style={{
               left: Math.max(12, Math.min(taskMenu.x, window.innerWidth - 180)),
-              top: Math.max(12, Math.min(taskMenu.y, window.innerHeight - 80)),
+              top: Math.max(12, Math.min(taskMenu.y, window.innerHeight - 160)),
             }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -1038,6 +1048,15 @@ export default function PlanBoard() {
               {taskMenu.task.status === "done" ? "Reopen" : "Mark done"}
             </button>
             ) : null}
+            <ShowConnectedMenuItem
+              isSource={connected?.sourceId === taskMenu.task.id}
+              chain={taskMenu.chain}
+              onShow={beginShowConnected}
+              onHide={() => {
+                hideConnected();
+                closeTaskMenu();
+              }}
+            />
           </div>
         ) : null}
       </main>

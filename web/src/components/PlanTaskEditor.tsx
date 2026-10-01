@@ -1,4 +1,4 @@
-import { type FormEvent } from "react";
+import { type FormEvent, useLayoutEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   type Attachment,
@@ -39,11 +39,19 @@ export function notifyDaysInput(value: number | null | undefined): string {
   return value == null ? "" : String(value);
 }
 
+export function focusPlanTitleInput(el: HTMLInputElement | null) {
+  if (!el || el.disabled) return;
+  el.focus();
+  const end = el.value.length;
+  el.setSelectionRange(end, end);
+}
+
 const DEFAULT_DEPENDS_HINT = "Click one or more other tasks on the board. Those become the tasks this one depends on.";
 
 export default function PlanTaskEditor(props: {
   editing: PlanTask | "new";
   pickingDeps: boolean;
+  titleFocusGen: number;
   draft: PlanTaskDraft;
   onDraftChange: (draft: PlanTaskDraft) => void;
   canEdit: boolean;
@@ -75,6 +83,7 @@ export default function PlanTaskEditor(props: {
   const {
     editing,
     pickingDeps,
+    titleFocusGen,
     draft,
     onDraftChange,
     canEdit,
@@ -96,6 +105,12 @@ export default function PlanTaskEditor(props: {
   const attachments = existing?.attachments ?? [];
   const children = showSubtasks ? existing?.subtasks ?? [] : [];
   const canToggle = Boolean(existing && (existing.can_complete || existing.status === "done"));
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  useLayoutEffect(() => {
+    if (titleFocusGen === 0) return;
+    focusPlanTitleInput(titleRef.current);
+  }, [titleFocusGen]);
 
   return (
     <>
@@ -157,6 +172,7 @@ export default function PlanTaskEditor(props: {
               <label>
                 Title
                 <input
+                  ref={titleRef}
                   value={draft.title}
                   onChange={(e) => onDraftChange({ ...draft, title: e.target.value })}
                   required

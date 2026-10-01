@@ -27,7 +27,7 @@ import { bucketChildren, bucketDescendantIds, bucketOptionLabel, walkBucketTree 
 import { saveItemWithPlanDue } from "../planDue";
 import SidebarResizeHandle from "../components/SidebarResizeHandle";
 import InboxResizeHandle from "../components/InboxResizeHandle";
-import { useDepartmentWorkNav } from "../planAccess";
+import OrgNavLinks from "../components/OrgNavLinks";
 import { readInboxCompact, readInboxCompactNotes } from "../inboxPrefs";
 import { filesFromDataTransfer } from "../clipboardFiles";
 
@@ -549,7 +549,6 @@ function transferHasFiles(dt: DataTransfer): boolean {
 export default function Board() {
   const { bucketId } = useParams();
   const location = useLocation();
-  const showDepartmentWork = useDepartmentWorkNav();
   const navigate = useNavigate();
   const viewAll = location.pathname === "/all";
   const viewDone = location.pathname === "/done";
@@ -1474,17 +1473,7 @@ export default function Board() {
         <Link className="bucket-link" to="/calendar" onClick={() => setMenuOpen(false)}>
           Calendar
         </Link>
-        <Link className="bucket-link" to="/org" onClick={() => setMenuOpen(false)}>
-          Organization
-        </Link>
-        {showDepartmentWork ? (
-          <Link className="bucket-link" to="/org/departments" onClick={() => setMenuOpen(false)}>
-            Org: All Projects
-          </Link>
-        ) : null}
-        <Link className="bucket-link" to="/org/my-todos" onClick={() => setMenuOpen(false)}>
-          My Org Todo's
-        </Link>
+        <OrgNavLinks onNavigate={() => setMenuOpen(false)} />
         {sidebarBuckets.map(({ bucket: b, depth, hasChildren }) =>
           renamingId === b.id ? (
             <form

@@ -34,6 +34,7 @@ from app.plan import (
     normalize_schedule_direction,
     org_members,
     place_task,
+    related_connected,
     related_undone,
     rename_project_buckets,
     replace_task_deps,
@@ -947,6 +948,22 @@ def related_tasks(
     ctx = _org(request, user, db)
     task = load_task(db, ctx["org_id"], task_id)
     related = related_undone(db, task)
+    return {
+        "upstream": [serialize_related_task(row) for row in related["upstream"]],
+        "following": [serialize_related_task(row) for row in related["following"]],
+    }
+
+
+@router.get("/tasks/{task_id}/connected")
+def connected_tasks(
+    task_id: str,
+    request: Request,
+    user: User = Depends(require_scope("plan")),
+    db: Session = Depends(get_db),
+):
+    ctx = _org(request, user, db)
+    task = load_task(db, ctx["org_id"], task_id)
+    related = related_connected(db, task)
     return {
         "upstream": [serialize_related_task(row) for row in related["upstream"]],
         "following": [serialize_related_task(row) for row in related["following"]],

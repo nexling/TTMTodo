@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -19,6 +20,8 @@ from app.models import (
     Membership,
     Organization,
     OrganizationInvitation,
+    PlanProject,
+    PlanTemplate,
     PushSubscription,
     User,
 )
@@ -48,6 +51,8 @@ INVITATION_STATUS_REVOKED = "revoked"
 LICENSE_TYPE_ORGANIZATION = "organization"
 LICENSE_TYPE_INDIVIDUAL = "individual"
 LICENSE_TYPES = (LICENSE_TYPE_ORGANIZATION, LICENSE_TYPE_INDIVIDUAL)
+
+log = logging.getLogger("magictodo")
 
 
 def _utcnow() -> datetime:
@@ -553,32 +558,103 @@ def consume_pending_invitations(db: Session, user: User) -> int:
     return consumed
 
 
-def ensure_personal_organization(db: Session, user: User) -> Membership:
-    existing = db.scalar(
-        select(Membership)
-        .join(Organization)
-        .where(
-            Membership.user_id == user.id,
-            Membership.role == ROLE_OWNER,
-            Membership.status == MEMBERSHIP_STATUS_ACTIVE,
-            Organization.owner_user_id == user.id,
+def _personal_org_shell_buckets(db: Session, owner: User, org: Organization) -> list[Bucket] | None:
+    """Owner org-bucket (and empty descendants) to delete, or None if the org is in use as a folder."""
+    from app.buckets import descendant_ids, user_buckets
+
+    org_bucket = db.scalar(
+        select(Bucket).where(Bucket.user_id == owner.id, Bucket.organization_id == org.id)
+    )
+    if org_bucket is None:
+        return []
+    buckets = user_buckets(db, owner.id)
+    by_id = {row.id: row for row in buckets}
+    target_ids = [org_bucket.id, *descendant_ids(buckets, org_bucket.id)]
+    item_count = (
+        db.scalar(select(func.count()).select_from(Item).where(Item.bucket_id.in_(target_ids))) or 0
+    )
+    if item_count:
+        return None
+    return [by_id[bucket_id] for bucket_id in reversed(target_ids) if bucket_id in by_id]
+
+
+def is_empty_personal_organization(db: Session, org: Organization) -> bool:
+    if not org.owner_user_id:
+        return False
+    owner = db.get(User, org.owner_user_id)
+    if owner is None:
+        return False
+    if (org.name or "") != _personal_org_name(owner.name, owner.email):
+        return False
+    active = list(
+        db.scalars(
+            select(Membership).where(
+                Membership.organization_id == org.id,
+                Membership.status == MEMBERSHIP_STATUS_ACTIVE,
+            )
         )
-        .order_by(Membership.created_at.asc())
     )
-    if existing is not None:
-        return existing
-    org = Organization(name=_personal_org_name(user.name, user.email), owner_user_id=user.id)
-    db.add(org)
-    db.flush()
-    row = Membership(
-        user_id=user.id,
-        organization_id=org.id,
-        role=ROLE_OWNER,
-        status=MEMBERSHIP_STATUS_ACTIVE,
+    if len(active) != 1:
+        return False
+    member = active[0]
+    if member.user_id != owner.id or _normalize_role(member.role) != ROLE_OWNER:
+        return False
+    pending = (
+        db.scalar(
+            select(func.count())
+            .select_from(OrganizationInvitation)
+            .where(
+                OrganizationInvitation.organization_id == org.id,
+                OrganizationInvitation.status == INVITATION_STATUS_PENDING,
+            )
+        )
+        or 0
     )
-    db.add(row)
-    db.flush()
-    return row
+    if pending:
+        return False
+    if db.scalar(select(func.count()).select_from(Department).where(Department.organization_id == org.id)):
+        return False
+    if db.scalar(select(func.count()).select_from(PlanProject).where(PlanProject.organization_id == org.id)):
+        return False
+    if db.scalar(select(func.count()).select_from(PlanTemplate).where(PlanTemplate.organization_id == org.id)):
+        return False
+    if org_license_record(db, org.id) is not None:
+        return False
+    return _personal_org_shell_buckets(db, owner, org) is not None
+
+
+def purge_empty_personal_organizations(db: Session) -> int:
+    removed = 0
+    orgs = list(db.scalars(select(Organization).where(Organization.owner_user_id.is_not(None))))
+    for org in orgs:
+        if not is_empty_personal_organization(db, org):
+            continue
+        owner = db.get(User, org.owner_user_id) if org.owner_user_id else None
+        buckets = _personal_org_shell_buckets(db, owner, org) if owner is not None else []
+        if buckets is None:
+            continue
+        for bucket in buckets:
+            bucket.parent_id = None
+        db.flush()
+        for bucket in buckets:
+            db.delete(bucket)
+        for row in list(db.scalars(select(Membership).where(Membership.organization_id == org.id))):
+            db.delete(row)
+        for row in list(
+            db.scalars(select(OrganizationInvitation).where(OrganizationInvitation.organization_id == org.id))
+        ):
+            db.delete(row)
+        for row in list(
+            db.scalars(select(LicenseAssignment).where(LicenseAssignment.organization_id == org.id))
+        ):
+            db.delete(row)
+        name = org.name
+        org_id = org.id
+        db.delete(org)
+        db.flush()
+        removed += 1
+        log.info("Removed empty personal organization %s (%s)", name, org_id)
+    return removed
 
 
 def user_has_real_data(db: Session, user: User) -> bool:
@@ -781,10 +857,9 @@ def upsert_authenticated_user(
             user.name = name
 
     link_individual_licenses(db, user)
-    membership = ensure_personal_organization(db, user)
     consume_pending_invitations(db, user)
     db.flush()
-    return get_user_context(db, user.id, membership.organization_id) or {}
+    return get_user_context(db, user.id) or {}
 
 
 def organization_settings(db: Session, user_id: str, organization_id: str | None) -> dict[str, Any] | None:

@@ -1592,6 +1592,60 @@
         }
       }
     },
+    "/api/plan/tasks/{task_id}/connected": {
+      "get": {
+        "tags": [
+          "plan"
+        ],
+        "summary": "Connected Tasks",
+        "operationId": "connected_tasks_api_plan_tasks__task_id__connected_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "X-Organization-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for plan calls when the user has more than one licensed organization."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/plan/tasks/{task_id}/reschedule": {
       "post": {
         "tags": [

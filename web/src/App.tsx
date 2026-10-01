@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, type AuthStatus } from "./api";
+import { AuthStatusProvider } from "./authStatus";
 import { startLive, stopLive } from "./live";
 import Board from "./pages/Board";
 import Calendar from "./pages/Calendar";
 import Gate from "./pages/Gate";
+import NoOrganization from "./pages/NoOrganization";
 import Org from "./pages/Org";
 import DepartmentWork from "./pages/DepartmentWork";
 import MyOrgTodos from "./pages/MyOrgTodos";
@@ -119,6 +121,9 @@ function AuthRoutes({
     );
   }
 
+  const orgPage = (page: ReactNode) =>
+    (status.organizations || []).length ? page : <NoOrganization />;
+
   return (
     <Routes>
       <Route path="/" element={<Board />} />
@@ -126,13 +131,13 @@ function AuthRoutes({
       <Route path="/done" element={<Board />} />
       <Route path="/b/:bucketId" element={<Board />} />
       <Route path="/calendar" element={<Calendar />} />
-      <Route path="/org" element={<Org />} />
-      <Route path="/org/departments/:departmentId" element={<DepartmentWork />} />
-      <Route path="/org/departments" element={<DepartmentWork />} />
-      <Route path="/org/my-todos" element={<MyOrgTodos />} />
-      <Route path="/org/projects/:projectId/departments/:departmentId" element={<PlanBoard />} />
-      <Route path="/org/projects/:projectId" element={<PlanBoard />} />
-      <Route path="/org/templates/:templateId" element={<PlanTemplatePage />} />
+      <Route path="/org" element={orgPage(<Org />)} />
+      <Route path="/org/departments/:departmentId" element={orgPage(<DepartmentWork />)} />
+      <Route path="/org/departments" element={orgPage(<DepartmentWork />)} />
+      <Route path="/org/my-todos" element={orgPage(<MyOrgTodos />)} />
+      <Route path="/org/projects/:projectId/departments/:departmentId" element={orgPage(<PlanBoard />)} />
+      <Route path="/org/projects/:projectId" element={orgPage(<PlanBoard />)} />
+      <Route path="/org/templates/:templateId" element={orgPage(<PlanTemplatePage />)} />
       <Route
         path="/settings"
         element={
@@ -206,7 +211,9 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <AuthRoutes status={status} refresh={refresh} />
+      <AuthStatusProvider value={status}>
+        <AuthRoutes status={status} refresh={refresh} />
+      </AuthStatusProvider>
     </BrowserRouter>
   );
 }

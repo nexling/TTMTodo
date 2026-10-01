@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { useHasOrganization } from "./authStatus";
 
 export function useDepartmentWorkNav() {
+  const hasOrg = useHasOrganization();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
+    if (!hasOrg) {
+      setShow(false);
+      return;
+    }
     let alive = true;
     api
       .planOverview()
@@ -24,7 +30,7 @@ export function useDepartmentWorkNav() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [hasOrg]);
 
-  return show;
+  return hasOrg && show;
 }
