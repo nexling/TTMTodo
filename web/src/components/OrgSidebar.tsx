@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import OrgNavLinks from "./OrgNavLinks";
 import SidebarResizeHandle from "./SidebarResizeHandle";
+import WhatsNewLink from "./WhatsNewLink";
 
 export default function OrgSidebar({
   active,
@@ -31,6 +32,7 @@ export default function OrgSidebar({
         <Link className="nav-btn" to="/settings">
           Settings
         </Link>
+        <WhatsNewLink />
       </div>
       <SidebarResizeHandle />
     </aside>

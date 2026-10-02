@@ -388,6 +388,59 @@ body.inbox-resizing {
   flex: 0 0 auto;
 }
 
+.whats-new-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.changelog-md h2,
+.changelog-md h3,
+.changelog-md h4 {
+  margin: 1.15em 0 0.4em;
+}
+
+.changelog-md h2:first-child,
+.changelog-md h3:first-child,
+.changelog-md h4:first-child {
+  margin-top: 0;
+}
+
+.changelog-md h2 {
+  font-size: 1.1rem;
+}
+
+.changelog-md h3 {
+  font-size: 1rem;
+}
+
+.changelog-md h4 {
+  font-size: 0.95rem;
+}
+
+.changelog-md p,
+.changelog-md ul,
+.changelog-md ol {
+  margin: 0 0 0.85em;
+}
+
+.changelog-md ul,
+.changelog-md ol {
+  padding-left: 1.3rem;
+}
+
+.changelog-md li {
+  margin: 0.2em 0;
+}
+
+.changelog-md p:last-child,
+.changelog-md ul:last-child,
+.changelog-md ol:last-child {
+  margin-bottom: 0;
+}
+
 .sidebar-foot {
   margin-top: auto;
   display: flex;

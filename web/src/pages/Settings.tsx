@@ -7,6 +7,7 @@ import { roleLabel } from "../roles";
 import ColorPicker, { COLOR_PALETTE } from "../components/ColorPicker";
 import SidebarResizeHandle from "../components/SidebarResizeHandle";
 import TestMailBox from "../components/TestMailBox";
+import WhatsNewLink from "../components/WhatsNewLink";
 import {
   readInboxCompact,
   readInboxCompactNotes,
@@ -620,6 +621,7 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
               Website admin
             </Link>
           ) : null}
+          <WhatsNewLink />
           <Link className="nav-btn" to="/security">
             Your data
           </Link>

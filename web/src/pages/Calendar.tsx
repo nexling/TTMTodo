@@ -30,6 +30,7 @@ import { useAuthStatus } from "../authStatus";
 import { useLiveReload } from "../live";
 import SidebarResizeHandle from "../components/SidebarResizeHandle";
 import OrgNavLinks from "../components/OrgNavLinks";
+import WhatsNewLink from "../components/WhatsNewLink";
 
 const CAL_VIEW_KEY = "magictodo:cal-view";
 const CAL_BUCKET_KEY = "magictodo:cal-add-bucket";
@@ -1007,6 +1008,7 @@ export default function Calendar() {
           <Link className="nav-btn" to="/settings" onClick={() => setMenuOpen(false)}>
             Settings
           </Link>
+          <WhatsNewLink onNavigate={() => setMenuOpen(false)} />
         </div>
         <SidebarResizeHandle />
       </aside>

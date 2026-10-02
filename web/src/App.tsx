@@ -14,6 +14,7 @@ import PlanBoard from "./pages/PlanBoard";
 import PlanTemplatePage from "./pages/PlanTemplate";
 import Settings from "./pages/Settings";
 import Security from "./pages/Security";
+import Changelog from "./pages/Changelog";
 import Unlicensed from "./pages/Unlicensed";
 import WebsiteAdmin from "./pages/WebsiteAdmin";
 
@@ -164,6 +165,7 @@ function AuthRoutes({
           />
         }
       />
+      <Route path="/changelog" element={<Changelog />} />
       {status.is_site_admin ? <Route path="/website-admin" element={admin} /> : null}
       <Route path="/setup" element={<Navigate to="/" replace />} />
       <Route path="/login" element={<Navigate to="/" replace />} />

@@ -23,6 +23,7 @@ import {
 } from "../components/ItemCard";
 import { hasPushSubscription, showLocalNotification, subscribePush } from "../push";
 import ColorPicker, { COLOR_PALETTE } from "../components/ColorPicker";
+import WhatsNewLink from "../components/WhatsNewLink";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { bucketChildren, bucketDescendantIds, bucketOptionLabel, walkBucketTree } from "../bucketTree";
 import { saveItemWithPlanDue } from "../planDue";
@@ -1608,6 +1609,7 @@ export default function Board() {
           <Link className="nav-btn" to="/settings" onClick={() => setMenuOpen(false)}>
             Settings
           </Link>
+          <WhatsNewLink onNavigate={() => setMenuOpen(false)} />
         </div>
         <SidebarResizeHandle />
         <InboxResizeHandle />
