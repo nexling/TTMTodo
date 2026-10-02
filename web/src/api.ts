@@ -110,6 +110,7 @@ export type PlanTemplateTask = {
   notify_days_before: number | null;
   sort_order: number;
   predecessor_ids: string[];
+  parent_id?: string | null;
 };
 
 export type PlanTemplate = {
@@ -117,6 +118,7 @@ export type PlanTemplate = {
   organization_id: string;
   name: string;
   schedule_direction: "forward" | "backward";
+  delivery_offset: number | null;
   created_at: string | null;
   task_count: number;
   tasks: PlanTemplateTask[];
@@ -126,6 +128,8 @@ export type PlanProject = {
   id: string;
   organization_id: string;
   name: string;
+  schedule_direction?: "forward" | "backward";
+  delivery_on?: string | null;
   created_at: string | null;
   task_count?: number | null;
 };
@@ -764,6 +768,7 @@ export const api = {
     body: {
       name?: string;
       schedule_direction?: "forward" | "backward";
+      delivery_offset?: number | null;
       tasks: {
         id?: string | null;
         title: string;
@@ -774,6 +779,7 @@ export const api = {
         notify_days_before?: number | null;
         sort_order: number;
         predecessor_ids: string[];
+        parent_id?: string | null;
       }[];
     },
   ) =>
@@ -802,7 +808,10 @@ export const api = {
         delivery_on: body.delivery_on || null,
       }),
     }),
-  updatePlanProject: (id: string, body: { name?: string }) =>
+  updatePlanProject: (
+    id: string,
+    body: { name?: string; delivery_on?: string | null; move_cards?: boolean | null },
+  ) =>
     request<PlanProject>(`/api/plan/projects/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

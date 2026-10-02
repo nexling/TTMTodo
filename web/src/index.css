@@ -1952,9 +1952,41 @@ body.who-col-resizing {
   gap: 0;
 }
 
-.plan-week.current {
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg-card));
-  box-shadow: inset 0 -2px 0 var(--accent);
+.plan-week.delivery {
+  box-shadow: inset 0 -2px 0 var(--ok);
+}
+
+.plan-week.current.delivery {
+  box-shadow: inset 0 -2px 0 var(--accent), inset 0 2px 0 var(--ok);
+}
+
+.plan-week.delivery-preview {
+  background: color-mix(in srgb, var(--ok) 18%, var(--bg-card));
+}
+
+.plan-delivery-handle {
+  cursor: grab;
+}
+
+.plan-delivery-handle:active {
+  cursor: grabbing;
+}
+
+.plan-delivery-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.plan-delivery-field input[type="date"] {
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.plan-delivery-actions {
+  flex-wrap: wrap;
 }
 
 .plan-week-head {
@@ -2275,6 +2307,10 @@ body.who-col-resizing {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.plan-chip-top .plan-chip-title {
+  min-width: 0;
 }
 
 .plan-chip-progress {

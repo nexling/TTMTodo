@@ -38,12 +38,16 @@ from app.plan import (
     related_undone,
     rename_project_buckets,
     replace_task_deps,
+    parse_due_on,
     require_active_org,
     require_dept_plan,
     require_plan_admin,
+    require_project_work,
     reschedule_task,
     resolve_due_on,
+    shift_project_tasks,
     template_origin_date,
+    template_span_days,
     serialize_department,
     serialize_project,
     serialize_related_task,
@@ -129,11 +133,13 @@ class TemplateTaskIn(BaseModel):
     notify_days_before: int | None = Field(default=None, ge=0, le=365)
     sort_order: int = 0
     predecessor_ids: list[str] = []
+    parent_id: str | None = None
 
 
 class TemplateSaveIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     schedule_direction: str | None = None
+    delivery_offset: int | None = None
     tasks: list[TemplateTaskIn]
 
 
@@ -147,6 +153,8 @@ class ProjectIn(BaseModel):
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    delivery_on: str | None = None
+    move_cards: bool | None = None
 
 
 class TaskIn(BaseModel):
@@ -598,6 +606,9 @@ def save_template(
         template.name = body.name.strip()
     if body.schedule_direction is not None:
         template.schedule_direction = normalize_schedule_direction(body.schedule_direction)
+    fields = body.model_fields_set
+    if "delivery_offset" in fields and body.delivery_offset is not None:
+        template.delivery_offset = max(0, body.delivery_offset)
     old_tasks = list(
         db.scalars(select(PlanTemplateTask).where(PlanTemplateTask.template_id == template.id)).all()
     )
@@ -613,6 +624,11 @@ def save_template(
         db.delete(dep)
     db.flush()
     keep = {task.id for task in body.tasks if task.id and task.id in old_ids}
+    not_keep = old_ids - keep
+    for task in old_tasks:
+        if task.parent_id in not_keep:
+            task.parent_id = None
+    db.flush()
     for task in old_tasks:
         if task.id not in keep:
             db.delete(task)
@@ -637,6 +653,7 @@ def save_template(
             row.week_offset = week_offset
             row.notify_days_before = src.notify_days_before
             row.sort_order = sort_order
+            row.parent_id = None
         else:
             row = PlanTemplateTask(
                 template_id=template.id,
@@ -647,6 +664,7 @@ def save_template(
                 week_offset=week_offset,
                 notify_days_before=src.notify_days_before,
                 sort_order=sort_order,
+                parent_id=None,
             )
             db.add(row)
             db.flush()
@@ -654,11 +672,42 @@ def save_template(
         if src.id:
             id_map[src.id] = row.id
         id_map[row.id] = row.id
+    by_id = {row.id: row for row in created}
+    child_src_ids: set[str] = set()
+    for src, row in zip(body.tasks, created, strict=True):
+        if src.parent_id:
+            child_src_ids.add(row.id)
+            if src.id:
+                child_src_ids.add(src.id)
+    for src, row in zip(body.tasks, created, strict=True):
+        parent_ref = (src.parent_id or "").strip()
+        if not parent_ref:
+            continue
+        parent_id = id_map.get(parent_ref)
+        if not parent_id:
+            raise HTTPException(status_code=400, detail="Parent task not found")
+        if parent_id == row.id:
+            raise HTTPException(status_code=400, detail="Task cannot be its own parent")
+        if parent_ref in child_src_ids or parent_id in child_src_ids:
+            raise HTTPException(status_code=400, detail="Subtasks cannot have subtasks")
+        parent = by_id.get(parent_id)
+        if parent is None or parent.template_id != template.id:
+            raise HTTPException(status_code=400, detail="Parent task not found")
+        row.parent_id = parent.id
+        row.department_id = parent.department_id
+        row.day_offset = parent.day_offset
+        row.week_offset = parent.day_offset // 7
+        row.notify_days_before = None
     edges: list[tuple[str, str]] = []
     for src, row in zip(body.tasks, created, strict=True):
+        if row.parent_id:
+            continue
         for pred_ref in src.predecessor_ids:
             pred_id = id_map.get(pred_ref)
             if not pred_id:
+                continue
+            pred = by_id.get(pred_id)
+            if pred is None or pred.parent_id:
                 continue
             edges.append((pred_id, row.id))
     if dep_edges_cycle(edges):
@@ -669,6 +718,11 @@ def save_template(
             continue
         seen.add((pred_id, succ_id))
         db.add(PlanTemplateDep(predecessor_id=pred_id, successor_id=succ_id))
+    if (
+        normalize_schedule_direction(template.schedule_direction) == "backward"
+        and template.delivery_offset is None
+    ):
+        template.delivery_offset = template_span_days(created)
     db.commit()
     return serialize_template(db, template)
 
@@ -697,10 +751,13 @@ def create_project(
 ):
     ctx = _org(request, user, db)
     require_plan_admin(ctx["capabilities"])
+    direction = "forward"
+    delivery = None
     project = PlanProject(
         organization_id=ctx["org_id"],
         name=body.name.strip(),
         created_by_user_id=user.id,
+        schedule_direction="forward",
     )
     db.add(project)
     db.flush()
@@ -718,6 +775,10 @@ def create_project(
             delivery_on=body.delivery_on,
         )
         apply_template(db, project, template, origin)
+        if direction == "backward":
+            delivery = parse_due_on(body.delivery_on)
+    project.schedule_direction = direction
+    project.delivery_on = delivery
     db.commit()
     db.expire_all()
     from app.mail import mail_today
@@ -738,15 +799,33 @@ def update_project(
     db: Session = Depends(get_db),
 ):
     ctx = _org(request, user, db)
-    require_plan_admin(ctx["capabilities"])
     project = load_project(db, ctx["org_id"], project_id)
-    if body.name is not None:
-        name = body.name.strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="Name is required")
-        if name != project.name:
-            rename_project_buckets(db, project, project.name, name)
-            project.name = name
+    fields = body.model_fields_set
+    if "name" in fields:
+        require_plan_admin(ctx["capabilities"])
+        if body.name is not None:
+            name = body.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="Name is required")
+            if name != project.name:
+                rename_project_buckets(db, project, project.name, name)
+                project.name = name
+    if "delivery_on" in fields:
+        require_project_work(ctx["capabilities"])
+        raw = (body.delivery_on or "").strip()
+        previous = project.delivery_on
+        if not raw:
+            project.delivery_on = None
+        else:
+            next_date = parse_due_on(raw)
+            if previous is None:
+                project.delivery_on = next_date
+            elif next_date != previous:
+                if body.move_cards is None:
+                    raise HTTPException(status_code=400, detail="Pick whether to move all cards")
+                project.delivery_on = next_date
+                if body.move_cards:
+                    shift_project_tasks(db, project, (next_date - previous).days)
     db.commit()
     return serialize_project(project)
 

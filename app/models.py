@@ -341,6 +341,7 @@ class PlanTemplate(Base):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     schedule_direction: Mapped[str] = mapped_column(String(16), nullable=False, default="forward")
+    delivery_offset: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     tasks: Mapped[list["PlanTemplateTask"]] = relationship(
@@ -364,6 +365,9 @@ class PlanTemplateTask(Base):
     day_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notify_days_before: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_template_tasks.id", ondelete="CASCADE"), nullable=True, default=None
+    )
 
     template: Mapped[PlanTemplate] = relationship(back_populates="tasks")
     successors: Mapped[list["PlanTemplateDep"]] = relationship(
@@ -401,6 +405,8 @@ class PlanProject(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    schedule_direction: Mapped[str] = mapped_column(String(16), nullable=False, default="forward")
+    delivery_on: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
     created_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

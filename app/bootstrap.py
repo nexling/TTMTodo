@@ -67,12 +67,15 @@ def migrate_schema() -> None:
     _migrate_bucket_nesting()
     _migrate_template_day_offset()
     _migrate_template_schedule_direction()
+    _migrate_template_delivery_offset()
+    _migrate_project_delivery()
     _migrate_department_leads()
     _migrate_plan_task_attachments()
     _migrate_plan_notify_days()
     _migrate_plan_task_notify_days()
     _migrate_invitation_unique()
     _migrate_plan_task_parent()
+    _migrate_template_task_parent()
     _migrate_api_token_scopes()
 
 
@@ -169,6 +172,49 @@ def _migrate_template_schedule_direction() -> None:
             text("ALTER TABLE plan_templates ADD COLUMN schedule_direction VARCHAR(16) NOT NULL DEFAULT 'forward'")
         )
     log.info("Added plan_templates.schedule_direction")
+
+
+def _migrate_template_delivery_offset() -> None:
+    inspector = inspect(engine)
+    if "plan_templates" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("plan_templates")}
+    if "delivery_offset" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE plan_templates ADD COLUMN delivery_offset INTEGER"))
+        conn.execute(
+            text(
+                """
+                UPDATE plan_templates
+                SET delivery_offset = (
+                    SELECT COALESCE(MAX(day_offset), 0)
+                    FROM plan_template_tasks
+                    WHERE plan_template_tasks.template_id = plan_templates.id
+                )
+                WHERE schedule_direction = 'backward'
+                """
+            )
+        )
+    log.info("Added plan_templates.delivery_offset")
+
+
+def _migrate_project_delivery() -> None:
+    inspector = inspect(engine)
+    if "plan_projects" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("plan_projects")}
+    with engine.begin() as conn:
+        if "schedule_direction" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE plan_projects ADD COLUMN schedule_direction VARCHAR(16) NOT NULL DEFAULT 'forward'"
+                )
+            )
+            log.info("Added plan_projects.schedule_direction")
+        if "delivery_on" not in columns:
+            conn.execute(text("ALTER TABLE plan_projects ADD COLUMN delivery_on DATE"))
+            log.info("Added plan_projects.delivery_on")
 
 
 def _migrate_department_leads() -> None:
@@ -354,6 +400,18 @@ def _migrate_plan_task_parent() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE plan_tasks ADD COLUMN parent_id VARCHAR(36)"))
     log.info("Added plan_tasks.parent_id")
+
+
+def _migrate_template_task_parent() -> None:
+    inspector = inspect(engine)
+    if "plan_template_tasks" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("plan_template_tasks")}
+    if "parent_id" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE plan_template_tasks ADD COLUMN parent_id VARCHAR(36)"))
+    log.info("Added plan_template_tasks.parent_id")
 
 
 def _migrate_api_token_scopes() -> None:

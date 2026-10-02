@@ -7,6 +7,7 @@ import PlanTaskEditor, { notifyDaysInput, parseNotifyDays } from "../components/
 import PlanWhoResizeHandle from "../components/PlanWhoResizeHandle";
 import { PlanProjectSpans, PlanViewSwitch, PlanWorkloadBar } from "../components/PlanWorkloadBar";
 import { LightboxOverlay, lightboxFor, type Lightbox } from "../components/ItemCard";
+import { DeliveryMoveDialog, type DeliveryMovePrompt } from "../components/DeliveryMoveDialog";
 import { ShiftRelatedDialog, useShiftFlow } from "../components/ShiftRelatedDialog";
 import { ShowConnectedBanner, ShowConnectedMenuItem } from "../components/ShowConnected";
 import { departmentBoardRows, departmentFocusRows, DepartmentViewMenu, type PlanGridRow } from "../departmentFocus";
@@ -29,24 +30,31 @@ import {
   ZOOM_OPTIONS,
   addDays,
   dayDelta,
+  defaultHeaderMode,
+  deliveryDueOnColumn,
   dropDueOn,
-  formatProjectHeader,
+  formatStackedProjectHeader,
+  isCurrentPlanColumn,
+  isDeliveryPlanColumn,
   newTaskDueOn,
   parseYmd,
   planColumnDelta,
   projectColumnKey,
   projectColumnsSpanning,
   projectTaskColumnKey,
+  readHeaderMode,
   readZoom,
   shiftDueByColumns,
   taskDueOn,
-  isCurrentPlanColumn,
+  writeHeaderMode,
   writeZoom,
   ymd,
+  type PlanHeaderMode,
   type PlanZoom,
 } from "../planZoom";
 
 const TASK_MIME = "application/x-magictodo-plan-task";
+const DELIVERY_MIME = "application/x-magictodo-delivery";
 const ZOOM_KEY = "magictodo:plan-zoom:project";
 
 function hideDoneKey(projectId: string): string {
@@ -189,6 +197,7 @@ export default function PlanBoard() {
   const [dropKey, setDropKey] = useState<string | null>(null);
   const [dropChipId, setDropChipId] = useState<string | null>(null);
   const draggingId = useRef<string | null>(null);
+  const draggingDelivery = useRef(false);
   const gridWrapRef = useRef<HTMLDivElement>(null);
   const scrolledKey = useRef<string | null>(null);
   const [pickingDeps, setPickingDeps] = useState(false);
@@ -206,6 +215,10 @@ export default function PlanBoard() {
   ]);
   const [deptMenu, setDeptMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [subtaskDraft, setSubtaskDraft] = useState({ title: "", assignee_user_id: "" });
+  const [deliveryDraft, setDeliveryDraft] = useState("");
+  const [headerMode, setHeaderMode] = useState<PlanHeaderMode>("calendar");
+  const [deliveryPrompt, setDeliveryPrompt] = useState<DeliveryMovePrompt | null>(null);
+  const [deliveryBusy, setDeliveryBusy] = useState(false);
   const admin = Boolean(data?.capabilities.can_manage_plan);
   const canManageWork = Boolean(data?.capabilities.can_manage_project_work || admin);
   const leadIds = data?.lead_department_ids ?? [];
@@ -258,6 +271,30 @@ export default function PlanBoard() {
     hideConnected();
   }, [projectId, hideConnected]);
 
+  useEffect(() => {
+    setDeliveryDraft(data?.project.delivery_on || "");
+  }, [data?.project.delivery_on]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    if (!data?.project.delivery_on) {
+      setHeaderMode("calendar");
+      return;
+    }
+    setHeaderMode(readHeaderMode(projectId, defaultHeaderMode(data.project.schedule_direction)));
+  }, [projectId, data?.project.delivery_on, data?.project.schedule_direction]);
+
+  useEffect(() => {
+    if (!deliveryPrompt) return;
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") cancelDeliveryMove();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deliveryPrompt]);
+
+  const previewDelivery = deliveryPrompt?.next || data?.project.delivery_on || null;
+
   const columns = useMemo(() => {
     const dates: string[] = [];
     for (const task of data?.tasks ?? []) {
@@ -265,8 +302,9 @@ export default function PlanBoard() {
       if (hideDone && task.status === "done") continue;
       dates.push(taskDueOn(task));
     }
+    if (previewDelivery) dates.push(previewDelivery);
     return projectColumnsSpanning(dates, zoom);
-  }, [data, zoom, hideDone]);
+  }, [data, zoom, hideDone, previewDelivery]);
 
   useLayoutEffect(() => {
     const key = `${projectId || ""}:${zoom}`;
@@ -423,6 +461,87 @@ export default function PlanBoard() {
       setError(err instanceof Error ? err.message : "Could not rename project");
       if (data?.project.name) setProjectName(data.project.name);
     }
+  }
+
+  function changeHeaderMode(next: PlanHeaderMode) {
+    setHeaderMode(next);
+    if (projectId) writeHeaderMode(projectId, next);
+  }
+
+  function cancelDeliveryMove() {
+    setDeliveryPrompt(null);
+    setDeliveryDraft(data?.project.delivery_on || "");
+  }
+
+  async function applyDelivery(next: string | null, moveCards: boolean | null) {
+    if (!projectId) return;
+    setDeliveryBusy(true);
+    setError("");
+    try {
+      const body: { delivery_on: string | null; move_cards?: boolean } = { delivery_on: next };
+      if (moveCards != null) body.move_cards = moveCards;
+      const updated = await api.updatePlanProject(projectId, body);
+      setDeliveryPrompt(null);
+      setDeliveryDraft(updated.delivery_on || "");
+      setData((prev) => (prev ? { ...prev, project: { ...prev.project, ...updated } } : prev));
+      if (moveCards) await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update delivery");
+      setDeliveryDraft(data?.project.delivery_on || "");
+      setDeliveryPrompt(null);
+      await load();
+    } finally {
+      setDeliveryBusy(false);
+    }
+  }
+
+  function proposeDelivery(next: string) {
+    const prev = data?.project.delivery_on || null;
+    if (!next) return;
+    if (!prev) {
+      void applyDelivery(next, null);
+      return;
+    }
+    if (next === prev) return;
+    const offsetDays = dayDelta(prev, next);
+    if (!offsetDays) {
+      void applyDelivery(next, false);
+      return;
+    }
+    setDeliveryDraft(next);
+    setDeliveryPrompt({ previous: prev, next, offsetDays });
+  }
+
+  function commitDeliveryField() {
+    if (!canManageWork || deliveryPrompt) return;
+    const current = data?.project.delivery_on || "";
+    const next = deliveryDraft.trim();
+    if (next === current) return;
+    if (!next) {
+      if (current) void applyDelivery(null, null);
+      return;
+    }
+    proposeDelivery(next);
+  }
+
+  function onDeliveryDragStart(e: DragEvent) {
+    if (!canManageWork) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.setData(DELIVERY_MIME, "delivery");
+    e.dataTransfer.setData("text/plain", "delivery");
+    e.dataTransfer.effectAllowed = "move";
+    draggingDelivery.current = true;
+  }
+
+  function isDeliveryDrag(e: DragEvent) {
+    return draggingDelivery.current || [...e.dataTransfer.types].includes(DELIVERY_MIME);
+  }
+
+  function dropDeliveryOnColumn(col: Date) {
+    if (!canManageWork) return;
+    proposeDelivery(deliveryDueOnColumn(col, zoom, data?.project.delivery_on || null));
   }
 
   function selectedDepTasks(): PlanTask[] {
@@ -676,6 +795,7 @@ export default function PlanBoard() {
 
   function clearDragUi() {
     draggingId.current = null;
+    draggingDelivery.current = false;
     dragMoveRef.current = null;
     setDragMove(null);
     setHoverCol(null);
@@ -750,10 +870,15 @@ export default function PlanBoard() {
     assigneeUserId?: string | null,
   ) {
     e.preventDefault();
+    if (isDeliveryDrag(e)) {
+      clearDragUi();
+      dropDeliveryOnColumn(col);
+      return;
+    }
     const id = e.dataTransfer.getData(TASK_MIME) || draggingId.current;
     const move = dragMoveRef.current;
     clearDragUi();
-    if (!id || pickingDeps || shiftPrompt) return;
+    if (!id || pickingDeps || shiftPrompt || deliveryPrompt) return;
     if (beforeId && beforeId === id && !(move && move.ids.length > 1)) return;
     const task = data?.tasks.find((row) => row.id === id);
     if (!task || !canManageTask(task)) return;
@@ -934,9 +1059,74 @@ export default function PlanBoard() {
               />
               Hide done
             </label>
+            {data?.project.delivery_on ? (
+              <div className="plan-zoom" role="group" aria-label="Headers">
+                <button
+                  className={`btn ghost small${headerMode === "calendar" ? " on" : ""}`}
+                  type="button"
+                  onClick={() => changeHeaderMode("calendar")}
+                >
+                  Calendar
+                </button>
+                <button
+                  className={`btn ghost small${headerMode === "relative" ? " on" : ""}`}
+                  type="button"
+                  onClick={() => changeHeaderMode("relative")}
+                >
+                  Relative
+                </button>
+              </div>
+            ) : null}
+            {canManageWork ? (
+              <label className="plan-delivery-field">
+                Delivery
+                <input
+                  type="date"
+                  value={deliveryDraft}
+                  aria-label="Delivery date"
+                  onChange={(e) => setDeliveryDraft(e.target.value)}
+                  onBlur={() => commitDeliveryField()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      (e.target as HTMLInputElement).blur();
+                    }
+                    if (e.key === "Escape") {
+                      setDeliveryDraft(data?.project.delivery_on || "");
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                />
+              </label>
+            ) : null}
+            {canManageWork && !data?.project.delivery_on ? (
+              <button
+                className="btn ghost small"
+                type="button"
+                draggable
+                onDragStart={onDeliveryDragStart}
+                onDragEnd={() => {
+                  draggingDelivery.current = false;
+                  setHoverCol(null);
+                }}
+              >
+                Add delivery
+              </button>
+            ) : null}
             <button className="btn ghost small" type="button" onClick={() => scrollPlanHeader(".plan-week.current")}>
               {todayLabel}
             </button>
+            {previewDelivery ? (
+              <button
+                className="btn ghost small"
+                type="button"
+                onClick={() =>
+                  scrollPlanHeader(`[data-plan-col="${projectColumnKey(parseYmd(previewDelivery), zoom)}"]`)
+                }
+              >
+                Delivery
+              </button>
+            ) : null}
           </div>
         </div>
         {error ? <p className="error">{error}</p> : null}
@@ -950,6 +1140,15 @@ export default function PlanBoard() {
                 void load();
               })
             }
+          />
+        ) : null}
+        {deliveryPrompt ? (
+          <DeliveryMoveDialog
+            prompt={deliveryPrompt}
+            busy={deliveryBusy}
+            onMoveAll={() => void applyDelivery(deliveryPrompt.next, true)}
+            onMarkOnly={() => void applyDelivery(deliveryPrompt.next, false)}
+            onCancel={cancelDeliveryMove}
           />
         ) : null}
         {focusMissing ? <p className="error">That department is not on this project.</p> : null}
@@ -984,14 +1183,46 @@ export default function PlanBoard() {
                 ) : null}
               </div>
               {columns.map((col, index) => {
-                const meta = formatProjectHeader(col, zoom, index > 0 ? columns[index - 1] : null);
+                const meta = formatStackedProjectHeader(
+                  col,
+                  zoom,
+                  index > 0 ? columns[index - 1] : null,
+                  headerMode === "relative" && Boolean(previewDelivery),
+                  previewDelivery,
+                );
+                const deliveryHere = isDeliveryPlanColumn(col, previewDelivery, zoom);
+                const deliveryPreview = Boolean(deliveryPrompt) && deliveryHere;
                 return (
                   <div
-                    className={`plan-week${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
+                    className={`plan-week${isCurrentPlanColumn(col, zoom) ? " current" : ""}${deliveryHere ? " delivery" : ""}${deliveryPreview ? " delivery-preview" : ""}`}
+                    data-plan-col={projectColumnKey(col, zoom)}
                     key={projectColumnKey(col, zoom)}
+                    onDragOver={(e) => {
+                      if (!canManageWork || !isDeliveryDrag(e)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setHoverCol(col);
+                    }}
+                    onDrop={(e) => {
+                      if (!isDeliveryDrag(e)) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      draggingDelivery.current = false;
+                      dropDeliveryOnColumn(col);
+                    }}
                   >
                     <div className="plan-week-head">
-                      <strong>{meta.title}</strong>
+                      <strong
+                        className={deliveryHere && canManageWork ? "plan-delivery-handle" : undefined}
+                        draggable={Boolean(deliveryHere && canManageWork && data?.project.delivery_on)}
+                        onDragStart={onDeliveryDragStart}
+                        onDragEnd={() => {
+                          draggingDelivery.current = false;
+                          setHoverCol(null);
+                        }}
+                      >
+                        {meta.title}
+                      </strong>
                       {meta.year ? <span className="plan-year">{meta.year}</span> : null}
                     </div>
                     {meta.sub ? <span className="hint">{meta.sub}</span> : null}
@@ -1039,6 +1270,15 @@ export default function PlanBoard() {
                           showBars || showProjects
                             ? undefined
                             : (e) => {
+                                if (isDeliveryDrag(e)) {
+                                  if (!canManageWork || pickingDeps) return;
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "move";
+                                  setHoverCol(col);
+                                  setDropKey(key);
+                                  setDropChipId(null);
+                                  return;
+                                }
                                 const multi = Boolean(dragMoveRef.current && dragMoveRef.current.ids.length > 1);
                                 if (!multi && (!rowManage || pickingDeps)) return;
                                 if (pickingDeps) return;

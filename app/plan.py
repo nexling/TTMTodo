@@ -115,6 +115,12 @@ def template_span_days(tasks: list[PlanTemplateTask]) -> int:
     return max((max(0, task.day_offset) for task in tasks), default=0)
 
 
+def template_delivery_days(template: PlanTemplate, tasks: list[PlanTemplateTask]) -> int:
+    if template.delivery_offset is not None:
+        return max(0, template.delivery_offset)
+    return template_span_days(tasks)
+
+
 def template_origin_date(
     db: Session,
     template: PlanTemplate,
@@ -128,7 +134,7 @@ def template_origin_date(
         if not delivery_on:
             raise HTTPException(status_code=400, detail="Pick a delivery date for the template")
         tasks = list(db.scalars(select(PlanTemplateTask).where(PlanTemplateTask.template_id == template.id)).all())
-        return parse_due_on(delivery_on) - timedelta(days=template_span_days(tasks))
+        return parse_due_on(delivery_on) - timedelta(days=template_delivery_days(template, tasks))
     if not start_week:
         raise HTTPException(status_code=400, detail="Pick a start week for the template")
     return parse_week_start(start_week)
@@ -146,6 +152,11 @@ def require_active_org(db: Session, user: User, preferred_org_id: str | None) ->
 def require_plan_admin(caps: dict) -> None:
     if not caps.get("can_manage_plan"):
         raise HTTPException(status_code=403, detail="Only organization admins can manage the plan")
+
+
+def require_project_work(caps: dict) -> None:
+    if not (caps.get("can_manage_project_work") or caps.get("can_manage_plan")):
+        raise HTTPException(status_code=403, detail="Only project managers can change delivery")
 
 
 def user_department_ids(db: Session, org_id: str, user_id: str) -> set[str]:
@@ -727,6 +738,20 @@ def reschedule_task(
         sync_child_schedule(db, task)
 
 
+def shift_project_tasks(db: Session, project: PlanProject, delta_days: int) -> None:
+    if not delta_days:
+        return
+    tasks = list(
+        db.scalars(
+            select(PlanTask).where(PlanTask.project_id == project.id, PlanTask.parent_id.is_(None))
+        ).all()
+    )
+    for task in tasks:
+        task.week_start = task.week_start + timedelta(days=delta_days)
+        sync_plan_task_item(db, task)
+        sync_child_schedule(db, task)
+
+
 def replace_task_deps(db: Session, task: PlanTask, predecessor_ids: list[str], org_id: str) -> None:
     unique: list[str] = []
     for pred_id in predecessor_ids:
@@ -773,6 +798,7 @@ def apply_template(db: Session, project: PlanProject, template: PlanTemplate, st
         ).all()
     )
     id_map: dict[str, PlanTask] = {}
+    child_ids = {src.id for src in tasks if src.parent_id}
     for index, src in enumerate(tasks):
         created = PlanTask(
             project_id=project.id,
@@ -787,10 +813,23 @@ def apply_template(db: Session, project: PlanProject, template: PlanTemplate, st
         db.add(created)
         db.flush()
         id_map[src.id] = created
+    for src in tasks:
+        if not src.parent_id or src.parent_id in child_ids:
+            continue
+        created = id_map.get(src.id)
+        parent = id_map.get(src.parent_id)
+        if created is None or parent is None:
+            continue
+        created.parent_id = parent.id
+        created.department_id = parent.department_id
+        created.week_start = parent.week_start
+        created.notify_days_before = None
     for dep in deps:
         pred = id_map.get(dep.predecessor_id)
         succ = id_map.get(dep.successor_id)
         if pred is None or succ is None:
+            continue
+        if pred.parent_id or succ.parent_id:
             continue
         db.add(PlanTaskDep(predecessor_id=pred.id, successor_id=succ.id))
 
@@ -817,7 +856,8 @@ def serialize_template_task(task: PlanTemplateTask, predecessor_ids: list[str]) 
         "week_offset": task.day_offset // 7,
         "notify_days_before": task.notify_days_before,
         "sort_order": task.sort_order,
-        "predecessor_ids": predecessor_ids,
+        "predecessor_ids": [] if task.parent_id else predecessor_ids,
+        "parent_id": task.parent_id,
     }
 
 
@@ -844,6 +884,7 @@ def serialize_template(db: Session, template: PlanTemplate) -> dict:
         "organization_id": template.organization_id,
         "name": template.name,
         "schedule_direction": normalize_schedule_direction(template.schedule_direction),
+        "delivery_offset": template.delivery_offset,
         "created_at": template.created_at,
         "task_count": len(tasks),
         "tasks": [serialize_template_task(task, preds.get(task.id, [])) for task in tasks],
@@ -855,6 +896,8 @@ def serialize_project(project: PlanProject, task_count: int | None = None) -> di
         "id": project.id,
         "organization_id": project.organization_id,
         "name": project.name,
+        "schedule_direction": normalize_schedule_direction(project.schedule_direction or "forward"),
+        "delivery_on": project.delivery_on.isoformat() if project.delivery_on else None,
         "created_at": project.created_at,
         "task_count": task_count,
     }

@@ -5854,6 +5854,28 @@
               }
             ],
             "title": "Name"
+          },
+          "delivery_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery On"
+          },
+          "move_cards": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Move Cards"
           }
         },
         "type": "object",
@@ -6573,6 +6595,17 @@
             ],
             "title": "Schedule Direction"
           },
+          "delivery_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Offset"
+          },
           "tasks": {
             "items": {
               "$ref": "#/components/schemas/TemplateTaskIn"
@@ -6669,6 +6702,17 @@
             "type": "array",
             "title": "Predecessor Ids",
             "default": []
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
           }
         },
         "type": "object",

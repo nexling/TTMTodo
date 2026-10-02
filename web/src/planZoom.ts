@@ -253,6 +253,65 @@ export function formatProjectHeader(
   };
 }
 
+export type PlanHeaderMode = "calendar" | "relative";
+
+export function readHeaderMode(projectId: string, fallback: PlanHeaderMode): PlanHeaderMode {
+  try {
+    const value = localStorage.getItem(`magictodo:plan-headers:${projectId}`);
+    if (value === "calendar" || value === "relative") return value;
+  } catch {
+    /* ignore */
+  }
+  return fallback;
+}
+
+export function writeHeaderMode(projectId: string, mode: PlanHeaderMode): void {
+  try {
+    localStorage.setItem(`magictodo:plan-headers:${projectId}`, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function defaultHeaderMode(scheduleDirection: string | null | undefined): PlanHeaderMode {
+  return scheduleDirection === "backward" ? "relative" : "calendar";
+}
+
+export function deliveryDueOnColumn(column: Date, zoom: PlanZoom, existing: string | null): string {
+  if (existing) return dropDueOn(existing, column, zoom);
+  return newTaskDueOn(column, zoom);
+}
+
+export function isDeliveryPlanColumn(col: Date, deliveryOn: string | null | undefined, zoom: PlanZoom): boolean {
+  if (!deliveryOn) return false;
+  return projectColumnKey(col, zoom) === projectColumnKey(parseYmd(deliveryOn), zoom);
+}
+
+export function relativeDeliveryTitle(col: Date, deliveryOn: string, zoom: PlanZoom): string {
+  const delta = planColumnDelta(deliveryOn, col, zoom);
+  const suffix = zoom === "day" ? "d" : zoom === "week" ? "w" : "m";
+  if (delta === 0) return "Delivery";
+  return delta > 0 ? `+${delta}${suffix}` : `${delta}${suffix}`;
+}
+
+export function formatStackedProjectHeader(
+  col: Date,
+  zoom: PlanZoom,
+  prev: Date | null,
+  relative: boolean,
+  deliveryOn: string | null,
+): { year?: string; title: string; sub?: string } {
+  const meta = formatProjectHeader(col, zoom, prev);
+  if (!relative || !deliveryOn) return meta;
+  const calendar =
+    zoom === "day" ? `${meta.title} ${meta.sub}` : zoom === "week" ? `${meta.title} · ${meta.sub}` : meta.title;
+  return {
+    year: meta.year,
+    title: relativeDeliveryTitle(col, deliveryOn, zoom),
+    sub: calendar,
+  };
+}
+
 export function formatChipDay(dueOn: string): string {
   const d = parseYmd(dueOn);
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
