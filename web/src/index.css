@@ -2040,6 +2040,49 @@ body.who-col-resizing {
   background: var(--bg-card);
 }
 
+.plan-grid-wrap.plan-selecting {
+  user-select: none;
+}
+
+.plan-marquee {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 1px solid var(--accent);
+}
+
+.plan-chip.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.plan-chip-drag-ghost {
+  position: absolute;
+  top: -1200px;
+  left: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+
+.plan-chip-drag-count {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a140a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .plan-load {
   align-self: flex-start;
   flex: none;

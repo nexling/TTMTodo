@@ -163,6 +163,19 @@ export function dropDueOn(fromDueOn: string, column: Date, zoom: PlanZoom): stri
   return ymd(new Date(year, month, day));
 }
 
+export function planColumnDelta(fromDueOn: string, dropColumn: Date, zoom: PlanZoom): number {
+  const from = alignAnchor(parseYmd(fromDueOn), zoom);
+  const to = alignAnchor(dropColumn, zoom);
+  if (zoom === "day") return Math.round((to.getTime() - from.getTime()) / 86400000);
+  if (zoom === "week") return Math.round((to.getTime() - from.getTime()) / 604800000);
+  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
+}
+
+export function shiftDueByColumns(fromDueOn: string, columnDelta: number, zoom: PlanZoom): string {
+  const dest = addPlanPeriods(parseYmd(fromDueOn), zoom, columnDelta);
+  return dropDueOn(fromDueOn, dest, zoom);
+}
+
 export function newTaskDueOn(column: Date, zoom: PlanZoom): string {
   if (zoom === "day") return ymd(column);
   if (zoom === "week") return ymd(startOfISOWeek(column));

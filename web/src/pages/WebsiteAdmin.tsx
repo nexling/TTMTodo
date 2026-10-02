@@ -1,12 +1,17 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, mailFailureHint, type AdminContext } from "../api";
+import { api, mailFailureHint, type AdminContext, type AdminOrganization, type Membership } from "../api";
 import SidebarResizeHandle from "../components/SidebarResizeHandle";
 import TestMailBox from "../components/TestMailBox";
 
 type Props = {
   onLogout: () => void;
 };
+
+function eligibleNewOwners(row: AdminOrganization | undefined): Membership[] {
+  if (!row) return [];
+  return (row.members || []).filter((member) => member.role !== "owner" && Boolean(member.user?.email));
+}
 
 export default function WebsiteAdmin({ onLogout }: Props) {
   const [ctx, setCtx] = useState<AdminContext | null>(null);
@@ -19,6 +24,10 @@ export default function WebsiteAdmin({ onLogout }: Props) {
   const [orgExpires, setOrgExpires] = useState("");
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgOwner, setNewOrgOwner] = useState("");
+  const [transferOrgId, setTransferOrgId] = useState("");
+  const [transferMembershipId, setTransferMembershipId] = useState("");
+  const [transferOrgName, setTransferOrgName] = useState("");
+  const [transferOwnerEmail, setTransferOwnerEmail] = useState("");
 
   async function load() {
     setErr("");
@@ -76,11 +85,36 @@ export default function WebsiteAdmin({ onLogout }: Props) {
     }
   }
 
+  async function transferOwnership(e: FormEvent) {
+    e.preventDefault();
+    setErr("");
+    setMsg("");
+    try {
+      const transferred = await api.adminMakeOwner(
+        transferOrgId,
+        transferMembershipId,
+        transferOrgName,
+        transferOwnerEmail,
+      );
+      setTransferMembershipId("");
+      setTransferOrgName("");
+      setTransferOwnerEmail("");
+      setMsg(`Ownership of ${transferred.organization.name} transferred to ${transferred.owner?.email || transferred.owner?.name || "the new owner"}.`);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not transfer ownership");
+    }
+  }
+
   async function remove(id: string) {
     if (!confirm("Delete this license?")) return;
     await api.deleteLicense(id);
     await load();
   }
+
+  const transferOrg = (ctx?.organizations || []).find((row) => row.organization.id === transferOrgId);
+  const transferEligible = eligibleNewOwners(transferOrg);
+  const transferCanSubmit = Boolean(transferOrg?.owner) && transferEligible.length > 0;
 
   return (
     <div className="shell">
@@ -227,6 +261,81 @@ export default function WebsiteAdmin({ onLogout }: Props) {
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="panel">
+          <h2>Transfer ownership</h2>
+          <p className="hint">
+            Moves ownership to another member of that organization. The current owner becomes an admin. This does not
+            appoint an owner when nobody owns the organization yet.
+          </p>
+          <form onSubmit={(e) => void transferOwnership(e)}>
+            <div className="field">
+              <label>Organization</label>
+              <select
+                value={transferOrgId}
+                onChange={(e) => {
+                  setTransferOrgId(e.target.value);
+                  setTransferMembershipId("");
+                }}
+                required
+              >
+                <option value="">Select…</option>
+                {(ctx?.organizations || []).map((row) => (
+                  <option key={row.organization.id} value={row.organization.id}>
+                    {row.organization.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {transferOrg ? (
+              <p className="hint">
+                {transferOrg.owner?.email || transferOrg.owner?.name
+                  ? `Current owner ${transferOrg.owner.email || transferOrg.owner.name}`
+                  : transferOrg.pending_owner_email
+                    ? `Waiting for ${transferOrg.pending_owner_email}`
+                    : "This organization has no owner."}
+              </p>
+            ) : null}
+            <div className="field">
+              <label>New owner</label>
+              <select
+                value={transferMembershipId}
+                onChange={(e) => setTransferMembershipId(e.target.value)}
+                required
+                disabled={!transferCanSubmit}
+              >
+                <option value="">{transferCanSubmit ? "Select…" : "Not available"}</option>
+                {transferEligible.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.user?.email || row.user?.username} · {row.role}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Type the organization name</label>
+              <input
+                value={transferOrgName}
+                onChange={(e) => setTransferOrgName(e.target.value)}
+                required
+                disabled={!transferCanSubmit}
+              />
+            </div>
+            <div className="field">
+              <label>Type the new owner email</label>
+              <input
+                type="email"
+                value={transferOwnerEmail}
+                onChange={(e) => setTransferOwnerEmail(e.target.value)}
+                required
+                disabled={!transferCanSubmit}
+              />
+            </div>
+            <button className="btn" type="submit" disabled={!transferCanSubmit}>
+              Transfer ownership
+            </button>
+          </form>
         </section>
       </main>
     </div>

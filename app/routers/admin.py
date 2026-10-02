@@ -12,6 +12,7 @@ from app.orgs import (
     save_individual_license,
     save_organization_license,
     site_admin_context,
+    transfer_organization_ownership,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -37,6 +38,11 @@ class OrganizationCreateIn(BaseModel):
 
 class TestMailIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
+
+
+class TransferOwnershipIn(BaseModel):
+    organization_name: str = Field(min_length=1, max_length=120)
+    owner_email: str = Field(min_length=3, max_length=254)
 
 
 def _http(exc: Exception) -> HTTPException:
@@ -88,6 +94,30 @@ def add_organization(
     payload["mail_sent"] = mail_ok
     payload["mail_error"] = None if mail_ok else (mail_err or "Could not send invitation email")
     return payload
+
+
+@router.post("/organizations/{organization_id}/memberships/{membership_id}/make-owner")
+def make_owner(
+    organization_id: str,
+    membership_id: str,
+    body: TransferOwnershipIn,
+    admin: User = Depends(require_site_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        payload = transfer_organization_ownership(
+            db,
+            organization_id,
+            membership_id,
+            body.organization_name,
+            body.owner_email,
+            actor_user_id=admin.id,
+        )
+        db.commit()
+        return payload
+    except ValueError as exc:
+        db.rollback()
+        raise _http(exc) from exc
 
 
 @router.post("/licenses/organization")

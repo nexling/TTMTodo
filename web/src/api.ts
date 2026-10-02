@@ -240,15 +240,18 @@ export function mailFailureHint(result: MailStatus): string {
   return result.mail_error ? " The invitation email could not be sent." : "";
 }
 
+export type AdminOrganization = {
+  organization: Organization;
+  owner: User | null;
+  pending_owner_email?: string | null;
+  license_summary: LicenseSummary;
+  members?: Membership[];
+};
+
 export type AdminContext = {
   known_users: User[];
   individual_licenses: License[];
-  organizations: {
-    organization: Organization;
-    owner: User | null;
-    pending_owner_email?: string | null;
-    license_summary: LicenseSummary;
-  }[];
+  organizations: AdminOrganization[];
 };
 
 export type AuthStatus = {
@@ -482,6 +485,26 @@ export const api = {
     }),
   kickMember: (membershipId: string) =>
     request<{ ok: boolean }>(`/api/orgs/memberships/${membershipId}/kick`, { method: "POST" }),
+  makeOwner: (membershipId: string, organization_name: string, owner_email: string) =>
+    request<AdminOrganization>(`/api/orgs/memberships/${membershipId}/make-owner`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organization_name, owner_email }),
+    }),
+  adminMakeOwner: (
+    organizationId: string,
+    membershipId: string,
+    organization_name: string,
+    owner_email: string,
+  ) =>
+    request<AdminOrganization>(
+      `/api/admin/organizations/${organizationId}/memberships/${membershipId}/make-owner`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organization_name, owner_email }),
+      },
+    ),
   revokeInvite: (invitationId: string) =>
     request<{ ok: boolean }>(`/api/orgs/invitations/${invitationId}/revoke`, { method: "POST" }),
   adminContext: () => request<AdminContext>("/api/admin"),

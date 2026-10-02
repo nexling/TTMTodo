@@ -241,6 +241,22 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
     setOrg(await api.orgSettings());
   }
 
+  async function makeOwner(row: Membership) {
+    setOrgErr("");
+    setOrgMsg("");
+    const typedName = window.prompt("Type the organization name to transfer ownership:");
+    if (typedName === null) return;
+    const typedEmail = window.prompt("Type the email of the new owner:");
+    if (typedEmail === null) return;
+    try {
+      await api.makeOwner(row.id, typedName, typedEmail);
+      setOrgMsg(`Ownership transferred to ${row.user?.email || row.user?.username}. You are now an admin.`);
+      setOrg(await api.orgSettings());
+    } catch (e) {
+      setOrgErr(e instanceof Error ? e.message : "Could not transfer ownership");
+    }
+  }
+
   async function copyValue(key: string, value: string) {
     try {
       await navigator.clipboard.writeText(value);
@@ -700,6 +716,14 @@ export default function Settings({ username, isSiteAdmin, userEmail, publicUrl, 
                       <button className="btn ghost small" type="button" onClick={() => void kick(row)}>
                         Remove
                       </button>
+                      {org.capabilities.is_owner && row.user?.email ? (
+                        <>
+                          {" "}
+                          <button className="btn ghost small" type="button" onClick={() => void makeOwner(row)}>
+                            Make owner
+                          </button>
+                        </>
+                      ) : null}
                     </>
                   ) : null}
                 </li>

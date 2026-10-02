@@ -14,6 +14,7 @@ from app.orgs import (
     rename_organization,
     revoke_invitation,
     suspend_membership,
+    transfer_organization_ownership,
     update_membership_role,
 )
 
@@ -35,6 +36,11 @@ class MembershipRoleIn(BaseModel):
 
 class SwitchIn(BaseModel):
     organization_id: str
+
+
+class TransferOwnershipIn(BaseModel):
+    organization_name: str = Field(min_length=1, max_length=120)
+    owner_email: str = Field(min_length=3, max_length=254)
 
 
 def _http(exc: Exception) -> HTTPException:
@@ -140,6 +146,34 @@ def patch_membership(
     except (ValueError, PermissionError) as extra:
         db.rollback()
         raise _http(extra) from extra
+
+
+@router.post("/memberships/{membership_id}/make-owner")
+def make_owner(
+    membership_id: str,
+    body: TransferOwnershipIn,
+    request: Request,
+    user: User = Depends(require_licensed),
+    db: Session = Depends(get_db),
+):
+    org_id = request.session.get(SESSION_ORG_KEY)
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No active organization")
+    try:
+        payload = transfer_organization_ownership(
+            db,
+            org_id,
+            membership_id,
+            body.organization_name,
+            body.owner_email,
+            actor_user_id=user.id,
+            require_owner_actor=True,
+        )
+        db.commit()
+        return payload
+    except (ValueError, PermissionError) as exc:
+        db.rollback()
+        raise _http(exc) from exc
 
 
 @router.post("/memberships/{membership_id}/kick")

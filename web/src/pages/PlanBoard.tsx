@@ -19,21 +19,26 @@ import {
   useLiveConnectedMenu,
   type ConnectedIds,
 } from "../planConnected";
-import { cellInsertBeforeId } from "../planOrder";
+import { cellAppendBlockBeforeId, cellInsertBeforeId } from "../planOrder";
 import { projectSpans } from "../planSpan";
+import { setCountDragImage, usePlanSelection } from "../planSelect";
 import { useWhoColumnWidth } from "../planWhoWidth";
 import { usePlanView } from "../planWorkload";
 import { useLiveReload } from "../live";
 import {
   ZOOM_OPTIONS,
+  addDays,
   dayDelta,
   dropDueOn,
   formatProjectHeader,
   newTaskDueOn,
+  parseYmd,
+  planColumnDelta,
   projectColumnKey,
   projectColumnsSpanning,
   projectTaskColumnKey,
   readZoom,
+  shiftDueByColumns,
   taskDueOn,
   isCurrentPlanColumn,
   writeZoom,
@@ -135,6 +140,31 @@ function undoneFollowingTasks(task: PlanTask, all: PlanTask[]): PlanTask[] {
     queue.push(...(succs.get(id) || []));
   }
   return found;
+}
+
+function relatedUnion(
+  selected: PlanTask[],
+  all: PlanTask[],
+  canManage: (task: PlanTask) => boolean,
+): { upstream: PlanTask[]; following: PlanTask[] } {
+  const selectedIds = new Set(selected.map((task) => task.id));
+  const upstream: PlanTask[] = [];
+  const following: PlanTask[] = [];
+  const seenUp = new Set<string>();
+  const seenFollow = new Set<string>();
+  for (const task of selected) {
+    for (const row of undoneBlockingTasks(task, all)) {
+      if (selectedIds.has(row.id) || !canManage(row) || seenUp.has(row.id)) continue;
+      seenUp.add(row.id);
+      upstream.push(row);
+    }
+    for (const row of undoneFollowingTasks(task, all)) {
+      if (selectedIds.has(row.id) || !canManage(row) || seenFollow.has(row.id)) continue;
+      seenFollow.add(row.id);
+      following.push(row);
+    }
+  }
+  return { upstream, following };
 }
 
 export default function PlanBoard() {
@@ -263,6 +293,21 @@ export default function PlanBoard() {
     for (const list of map.values()) list.sort((a, b) => a.sort_order - b.sort_order);
     return map;
   }, [data, zoom, hideDone, focusDepartmentId]);
+
+  const paintedIds = useMemo(() => paintedIdsFromCells(tasksByCell), [tasksByCell]);
+  const [dragMove, setDragMove] = useState<{ grabbedId: string; ids: string[] } | null>(null);
+  const dragMoveRef = useRef<{ grabbedId: string; ids: string[] } | null>(null);
+  const [hoverCol, setHoverCol] = useState<Date | null>(null);
+  const selection = usePlanSelection({
+    enabled: !pickingDeps && (planView === "cards" || Boolean(connected)),
+    wrapRef: gridWrapRef,
+    paintedIds,
+    canSelectId: (id) => {
+      const task = data?.tasks.find((row) => row.id === id);
+      return Boolean(task && canManageTask(task));
+    },
+    resetKey: `${projectId || ""}:${focusDepartmentId || ""}`,
+  });
 
   const columnKeys = useMemo(() => columns.map((col) => projectColumnKey(col, zoom)), [columns, zoom]);
 
@@ -515,6 +560,7 @@ export default function PlanBoard() {
 
   function onTaskContextMenu(e: MouseEvent<HTMLButtonElement>, task: PlanTask) {
     setDeptMenu(null);
+    selection.onChipContextMenu(task.id);
     openConnectedMenu(e, task);
   }
 
@@ -609,14 +655,91 @@ export default function PlanBoard() {
   }
 
   function onTaskDragStart(e: DragEvent, task: PlanTask) {
-    if (!canManageTask(task) || pickingDeps) {
+    if (!canManageTask(task) || pickingDeps || selection.consumeDragStart()) {
       e.preventDefault();
       return;
     }
+    const multi = selection.selectedIds.has(task.id) && selection.selectedIds.size > 1;
+    const ids = multi ? [...selection.selectedIds] : [task.id];
+    if (!selection.selectedIds.has(task.id)) selection.onChipContextMenu(task.id);
     e.dataTransfer.setData(TASK_MIME, task.id);
     e.dataTransfer.setData("text/plain", task.id);
     e.dataTransfer.effectAllowed = "move";
     draggingId.current = task.id;
+    const nextMove = { grabbedId: task.id, ids };
+    dragMoveRef.current = nextMove;
+    setDragMove(nextMove);
+    if (ids.length > 1 && e.currentTarget instanceof HTMLElement) {
+      setCountDragImage(e.dataTransfer, e.currentTarget, ids.length - 1);
+    }
+  }
+
+  function clearDragUi() {
+    draggingId.current = null;
+    dragMoveRef.current = null;
+    setDragMove(null);
+    setHoverCol(null);
+    setDropKey(null);
+    setDropChipId(null);
+  }
+
+  async function applySetMove(
+    grabbed: PlanTask,
+    ids: string[],
+    col: Date,
+    answers: { upstream: boolean; following: boolean },
+  ) {
+    const all = data?.tasks || [];
+    const movingIds = new Set(ids);
+    const selected = ids
+      .map((id) => all.find((row) => row.id === id))
+      .filter((row): row is PlanTask => Boolean(row));
+    const delta = planColumnDelta(taskDueOn(grabbed), col, zoom);
+    const offsetDays = dayDelta(taskDueOn(grabbed), dropDueOn(taskDueOn(grabbed), col, zoom));
+    const { upstream, following } = relatedUnion(selected, all, canManageTask);
+    selected.sort((a, b) => {
+      const destA = shiftDueByColumns(taskDueOn(a), delta, zoom);
+      const destB = shiftDueByColumns(taskDueOn(b), delta, zoom);
+      return (
+        projectTaskColumnKey(destA, zoom).localeCompare(projectTaskColumnKey(destB, zoom)) ||
+        a.sort_order - b.sort_order ||
+        a.id.localeCompare(b.id)
+      );
+    });
+    for (const task of selected) {
+      const dueOn = shiftDueByColumns(taskDueOn(task), delta, zoom);
+      const destColumn = projectTaskColumnKey(dueOn, zoom);
+      const beforeId = cellAppendBlockBeforeId({
+        items: all,
+        movingIds,
+        departmentId: task.department_id,
+        destColumn,
+        idOf: (row) => row.id,
+        deptOf: (row) => row.department_id,
+        sortOf: (row) => row.sort_order,
+        columnOf: (row) => projectTaskColumnKey(taskDueOn(row), zoom),
+        assigneeOf: focusDepartmentId ? (row) => row.assignee_user_id : undefined,
+        assigneeUserId: focusDepartmentId ? task.assignee_user_id ?? null : undefined,
+      });
+      await api.reschedulePlanTask(task.id, {
+        due_on: dueOn,
+        department_id: task.department_id,
+        before_id: beforeId,
+      });
+    }
+    if (answers.upstream || answers.following) {
+      const extraIds = new Set<string>();
+      if (answers.upstream) for (const row of upstream) extraIds.add(row.id);
+      if (answers.following) for (const row of following) extraIds.add(row.id);
+      for (const id of extraIds) {
+        const extra = all.find((row) => row.id === id);
+        if (!extra) continue;
+        await api.reschedulePlanTask(id, {
+          due_on: ymd(addDays(parseYmd(taskDueOn(extra)), offsetDays)),
+        });
+      }
+    }
+    await load();
   }
 
   async function onCellDrop(
@@ -627,14 +750,45 @@ export default function PlanBoard() {
     assigneeUserId?: string | null,
   ) {
     e.preventDefault();
-    setDropKey(null);
-    setDropChipId(null);
     const id = e.dataTransfer.getData(TASK_MIME) || draggingId.current;
-    draggingId.current = null;
+    const move = dragMoveRef.current;
+    clearDragUi();
     if (!id || pickingDeps || shiftPrompt) return;
-    if (beforeId && beforeId === id) return;
+    if (beforeId && beforeId === id && !(move && move.ids.length > 1)) return;
     const task = data?.tasks.find((row) => row.id === id);
-    if (!task || !canManageTask(task) || !canManageDept(departmentId)) return;
+    if (!task || !canManageTask(task)) return;
+    const setIds = move && move.grabbedId === id && move.ids.length > 1 ? move.ids : null;
+    if (setIds) {
+      const delta = planColumnDelta(taskDueOn(task), col, zoom);
+      if (!delta) return;
+      const all = data?.tasks || [];
+      const selected = setIds
+        .map((taskId) => all.find((row) => row.id === taskId))
+        .filter((row): row is PlanTask => Boolean(row));
+      const { upstream, following } = relatedUnion(selected, all, canManageTask);
+      const offsetDays = dayDelta(taskDueOn(task), dropDueOn(taskDueOn(task), col, zoom));
+      const apply = (answers: { upstream: boolean; following: boolean }) => applySetMove(task, setIds, col, answers);
+      if (
+        beginShiftFlow({
+          title: `${selected.length} tasks`,
+          offsetDays,
+          upstream,
+          following,
+          apply,
+        })
+      ) {
+        return;
+      }
+      setError("");
+      try {
+        await apply({ upstream: false, following: false });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not move tasks");
+        await load();
+      }
+      return;
+    }
+    if (!canManageDept(departmentId)) return;
     const dueOn = dropDueOn(taskDueOn(task), col, zoom);
     const offsetDays = dayDelta(taskDueOn(task), dueOn);
     const all = data?.tasks || [];
@@ -702,8 +856,22 @@ export default function PlanBoard() {
   const todayLabel = zoom === "day" ? "Today" : zoom === "month" ? "This month" : "This week";
   const showBars = planView === "bars" && !pickingDeps && !connected;
   const showProjects = planView === "projects" && !pickingDeps && !connected;
-  const paintedIds = useMemo(() => paintedIdsFromCells(tasksByCell), [tasksByCell]);
   const hiddenConnected = connected ? hiddenConnectedCount(connected, paintedIds) : 0;
+  const destDropKeys = useMemo(() => {
+    if (!dragMove || dragMove.ids.length < 2 || !hoverCol || !data) return null;
+    const grabbed = data.tasks.find((row) => row.id === dragMove.grabbedId);
+    if (!grabbed) return null;
+    const delta = planColumnDelta(taskDueOn(grabbed), hoverCol, zoom);
+    const keys = new Set<string>();
+    for (const id of dragMove.ids) {
+      const task = data.tasks.find((row) => row.id === id);
+      if (!task || task.parent_id) continue;
+      const dest = shiftDueByColumns(taskDueOn(task), delta, zoom);
+      const rowKey = focusDepartmentId ? task.assignee_user_id || "dept" : task.department_id || "none";
+      keys.add(`${rowKey}|${projectTaskColumnKey(dest, zoom)}`);
+    }
+    return keys;
+  }, [dragMove, hoverCol, data, zoom, focusDepartmentId]);
 
   return (
     <div className="shell">
@@ -791,8 +959,9 @@ export default function PlanBoard() {
         ) : focusMissing ? null : (
           <div
             ref={gridWrapRef}
-            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}`}
+            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}${selection.selecting ? " plan-selecting" : ""}`}
             onClick={(e) => {
+              if (selection.onWrapClick(e)) return;
               if (connected) connectedGridClick(e, hideConnected);
             }}
             style={
@@ -860,21 +1029,36 @@ export default function PlanBoard() {
                     const tasks = tasksByCell.get(key) || [];
                     return (
                       <div
-                        className={`plan-cell${showBars || showProjects ? "" : dropKey === key ? " drag-over" : ""}${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
+                        className={`plan-cell${showBars || showProjects ? "" : destDropKeys?.has(key) || (dropKey === key && !destDropKeys) ? " drag-over" : ""}${isCurrentPlanColumn(col, zoom) ? " current" : ""}`}
                         key={key}
                         style={showProjects ? { gridRow, gridColumn: colIndex + 2 } : undefined}
+                        onPointerDown={
+                          showBars || showProjects ? undefined : (e) => selection.onCellPointerDown(e)
+                        }
                         onDragOver={
                           showBars || showProjects
                             ? undefined
                             : (e) => {
-                                if (!rowManage || pickingDeps) return;
+                                const multi = Boolean(dragMoveRef.current && dragMoveRef.current.ids.length > 1);
+                                if (!multi && (!rowManage || pickingDeps)) return;
+                                if (pickingDeps) return;
                                 e.preventDefault();
                                 e.dataTransfer.dropEffect = "move";
+                                setHoverCol(col);
+                                if (multi) {
+                                  setDropKey(null);
+                                  setDropChipId(null);
+                                  return;
+                                }
                                 setDropKey(key);
                                 setDropChipId(null);
                               }
                         }
-                        onDragLeave={showBars || showProjects ? undefined : () => setDropKey((cur) => (cur === key ? null : cur))}
+                        onDragLeave={
+                          showBars || showProjects
+                            ? undefined
+                            : () => setDropKey((cur) => (cur === key ? null : cur))
+                        }
                         onDrop={
                           showBars || showProjects
                             ? undefined
@@ -896,25 +1080,31 @@ export default function PlanBoard() {
                           <button
                             key={task.id}
                             type="button"
-                            className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${pickingDeps && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editingTaskId() ? " dep-source" : ""}${dropChipId === task.id ? " drop-before" : ""}${connectedChipClass(task.id, connected)}`}
+                            data-plan-chip-id={task.id}
+                            className={`plan-chip${task.status === "done" ? " done" : ""}${task.blocked ? " blocked" : ""}${selection.isSelected(task.id) ? " selected" : ""}${pickingDeps && draft.predecessor_ids.includes(task.id) ? " dep-picked" : ""}${pickingDeps && task.id === editingTaskId() ? " dep-source" : ""}${dropChipId === task.id ? " drop-before" : ""}${connectedChipClass(task.id, connected)}`}
                             style={
                               task.status === "done"
                                 ? undefined
                                 : { background: `color-mix(in srgb, ${row.color} 28%, var(--bg-card))` }
                             }
                             draggable={canManageTask(task) && !pickingDeps}
+                            onPointerDown={(e) => selection.onChipPointerDown(e)}
                             onDragStart={(e) => onTaskDragStart(e, task)}
-                            onDragEnd={() => {
-                              draggingId.current = null;
-                              setDropKey(null);
-                              setDropChipId(null);
-                            }}
+                            onDragEnd={() => clearDragUi()}
                             onDragOver={(e) => {
-                              if (!rowManage || pickingDeps) return;
+                              const multi = Boolean(dragMoveRef.current && dragMoveRef.current.ids.length > 1);
+                              if (pickingDeps) return;
+                              if (!multi && !rowManage) return;
                               if (draggingId.current === task.id) return;
                               e.preventDefault();
                               e.stopPropagation();
                               e.dataTransfer.dropEffect = "move";
+                              setHoverCol(col);
+                              if (multi) {
+                                setDropChipId(null);
+                                setDropKey(null);
+                                return;
+                              }
                               setDropChipId(task.id);
                               setDropKey(null);
                             }}
@@ -927,7 +1117,10 @@ export default function PlanBoard() {
                               e.stopPropagation();
                               void onCellDrop(e, row.departmentId, col, task.id, row.assigneeUserId);
                             }}
-                            onClick={() => openEdit(task)}
+                            onClick={(e) => {
+                              const next = selection.onChipClick(e, task.id);
+                              if (next.open) openEdit(task);
+                            }}
                             onContextMenu={(e) => onTaskContextMenu(e, task)}
                           >
                             <span className="plan-chip-top">
@@ -961,6 +1154,17 @@ export default function PlanBoard() {
                 ];
               })}
             </div>
+            {selection.marquee ? (
+              <div
+                className="plan-marquee"
+                style={{
+                  left: selection.marquee.left,
+                  top: selection.marquee.top,
+                  width: selection.marquee.right - selection.marquee.left,
+                  height: selection.marquee.bottom - selection.marquee.top,
+                }}
+              />
+            ) : null}
           </div>
         )}
 

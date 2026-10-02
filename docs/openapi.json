@@ -418,6 +418,56 @@
         }
       }
     },
+    "/api/orgs/memberships/{membership_id}/make-owner": {
+      "post": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Make Owner",
+        "operationId": "make_owner_api_orgs_memberships__membership_id__make_owner_post",
+        "parameters": [
+          {
+            "name": "membership_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Membership Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferOwnershipIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/orgs/memberships/{membership_id}/kick": {
       "post": {
         "tags": [
@@ -1910,6 +1960,65 @@
             }
           },
           "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/organizations/{organization_id}/memberships/{membership_id}/make-owner": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Make Owner",
+        "operationId": "make_owner_api_admin_organizations__organization_id__memberships__membership_id__make_owner_post",
+        "parameters": [
+          {
+            "name": "organization_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Organization Id"
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Membership Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferOwnershipIn"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
@@ -6674,6 +6783,28 @@
           "last_used_at"
         ],
         "title": "TokenOut"
+      },
+      "TransferOwnershipIn": {
+        "properties": {
+          "organization_name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Organization Name"
+          },
+          "owner_email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Owner Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "organization_name",
+          "owner_email"
+        ],
+        "title": "TransferOwnershipIn"
       },
       "UserOut": {
         "properties": {

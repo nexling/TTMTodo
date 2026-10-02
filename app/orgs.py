@@ -91,6 +91,16 @@ def _normalize_role(value: Any, fallback: str = ROLE_USER) -> str:
     return normalized
 
 
+def _folded_text(value: Any) -> str:
+    return (_normalize_text(value) or "").casefold()
+
+
+def _confirm_text_match(provided: Any, expected: Any) -> bool:
+    left = _folded_text(provided)
+    right = _folded_text(expected)
+    return bool(left) and left == right
+
+
 def membership_capabilities(role: str) -> dict[str, bool]:
     role = _normalize_role(role)
     manage = role in {ROLE_OWNER, ROLE_ADMIN}
@@ -906,12 +916,29 @@ def pending_owner_email(db: Session, organization_id: str) -> str | None:
     return invite.email if invite is not None else None
 
 
+def organization_active_members(db: Session, organization_id: str) -> list[Membership]:
+    members = list(
+        db.scalars(
+            select(Membership)
+            .options(joinedload(Membership.user))
+            .where(
+                Membership.organization_id == organization_id,
+                Membership.status == MEMBERSHIP_STATUS_ACTIVE,
+            )
+        ).unique()
+    )
+    members.sort(key=_membership_sort_key)
+    return members
+
+
 def serialize_admin_organization(db: Session, org: Organization) -> dict[str, Any]:
+    members = organization_active_members(db, org.id)
     return {
         "organization": serialize_organization(org),
         "owner": serialize_user(org.owner) if org.owner is not None else None,
         "pending_owner_email": pending_owner_email(db, org.id),
         "license_summary": organization_license_summary(db, org.id),
+        "members": [serialize_membership(row, include_user=True) for row in members],
     }
 
 
@@ -1036,6 +1063,71 @@ def invite_user(db: Session, user_id: str, organization_id: str, email: str, rol
         pending.invited_by_user_id = user_id
     db.flush()
     return {"membership": None, "invitation": serialize_invitation(pending)}
+
+
+def transfer_organization_ownership(
+    db: Session,
+    organization_id: str,
+    membership_id: str,
+    organization_name: str,
+    owner_email: str,
+    *,
+    actor_user_id: str | None = None,
+    require_owner_actor: bool = False,
+) -> dict[str, Any]:
+    if require_owner_actor:
+        if not actor_user_id:
+            raise PermissionError("You do not have permission to perform this action")
+        require_capability(db, actor_user_id, organization_id, "is_owner")
+    org = db.get(Organization, organization_id)
+    if org is None:
+        raise ValueError("Organization was not found")
+    if not org.owner_user_id:
+        raise ValueError("This organization has no owner to transfer")
+    if not _confirm_text_match(organization_name, org.name):
+        raise ValueError("Organization name does not match")
+    target = db.scalar(
+        select(Membership)
+        .options(joinedload(Membership.user))
+        .where(
+            Membership.id == membership_id,
+            Membership.organization_id == organization_id,
+            Membership.status == MEMBERSHIP_STATUS_ACTIVE,
+        )
+    )
+    if target is None:
+        raise ValueError("Member was not found")
+    if target.user_id == org.owner_user_id or _normalize_role(target.role) == ROLE_OWNER:
+        raise ValueError("That member is already the owner")
+    target_email = _normalize_email(getattr(target.user, "email", None))
+    if target_email is None:
+        raise ValueError("The new owner must have an email")
+    if _normalize_email(owner_email) != target_email:
+        raise ValueError("Owner email does not match")
+    previous_owner_id = org.owner_user_id
+    for row in list(
+        db.scalars(
+            select(Membership).where(
+                Membership.organization_id == organization_id,
+                Membership.status == MEMBERSHIP_STATUS_ACTIVE,
+                Membership.id != target.id,
+            )
+        )
+    ):
+        if row.user_id == previous_owner_id or _normalize_role(row.role) == ROLE_OWNER:
+            row.role = ROLE_ADMIN
+    target.role = ROLE_OWNER
+    org.owner_user_id = target.user_id
+    db.flush()
+    db.refresh(org, attribute_names=["owner"])
+    log.info(
+        "organization ownership transferred org=%s from=%s to=%s by=%s",
+        organization_id,
+        previous_owner_id,
+        target.user_id,
+        actor_user_id,
+    )
+    return serialize_admin_organization(db, org)
 
 
 def update_membership_role(db: Session, user_id: str, organization_id: str, membership_id: str, role: str) -> dict[str, Any]:

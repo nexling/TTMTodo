@@ -13,7 +13,8 @@ import {
   walkTemplateConnected,
   type ConnectedIds,
 } from "../planConnected";
-import { applyDepartmentSort, cellInsertBeforeId, nextDeptSort, orderDepartmentIds } from "../planOrder";
+import { applyDepartmentSort, applyTimeBlockShift, cellInsertBeforeId, nextDeptSort, orderDepartmentIds } from "../planOrder";
+import { setCountDragImage, usePlanSelection } from "../planSelect";
 import {
   ZOOM_OPTIONS,
   readZoom,
@@ -189,6 +190,18 @@ export default function PlanTemplatePage() {
     return map;
   }, [tasks, zoom]);
 
+  const paintedKeys = useMemo(() => paintedKeysFromCells(tasksByCell), [tasksByCell]);
+  const [dragMove, setDragMove] = useState<{ grabbedKey: string; keys: string[] } | null>(null);
+  const dragMoveRef = useRef<{ grabbedKey: string; keys: string[] } | null>(null);
+  const [hoverCol, setHoverCol] = useState<number | null>(null);
+  const selection = usePlanSelection({
+    enabled: canEdit && !pickingDeps,
+    wrapRef: gridWrapRef,
+    paintedIds: paintedKeys,
+    canSelectId: () => canEdit,
+    resetKey: templateId || "",
+  });
+
   function cellKey(departmentId: string, col: number): string {
     return `${departmentId || "none"}|${col}`;
   }
@@ -268,6 +281,7 @@ export default function PlanTemplatePage() {
   function onTaskContextMenu(e: MouseEvent<HTMLButtonElement>, task: DraftTask) {
     e.preventDefault();
     e.stopPropagation();
+    selection.onChipContextMenu(task.key);
     setTaskMenu({ task, x: e.clientX, y: e.clientY, chain: walkTemplateConnected(task, tasks) });
   }
 
@@ -391,23 +405,62 @@ export default function PlanTemplatePage() {
   }
 
   function onTaskDragStart(e: DragEvent, task: DraftTask) {
-    if (!canEdit || pickingDeps) {
+    if (!canEdit || pickingDeps || selection.consumeDragStart()) {
       e.preventDefault();
       return;
     }
+    const multi = selection.selectedIds.has(task.key) && selection.selectedIds.size > 1;
+    const keys = multi ? [...selection.selectedIds] : [task.key];
+    if (!selection.selectedIds.has(task.key)) selection.onChipContextMenu(task.key);
     e.dataTransfer.setData(TASK_MIME, task.key);
     e.dataTransfer.setData("text/plain", task.key);
     e.dataTransfer.effectAllowed = "move";
     draggingKey.current = task.key;
+    const nextMove = { grabbedKey: task.key, keys };
+    dragMoveRef.current = nextMove;
+    setDragMove(nextMove);
+    if (keys.length > 1 && e.currentTarget instanceof HTMLElement) {
+      setCountDragImage(e.dataTransfer, e.currentTarget, keys.length - 1);
+    }
+  }
+
+  function clearDragUi() {
+    draggingKey.current = null;
+    dragMoveRef.current = null;
+    setDragMove(null);
+    setHoverCol(null);
+    setDropKey(null);
+    setDropChipKey(null);
   }
 
   async function onCellDrop(e: DragEvent, departmentId: string, col: number, beforeKey?: string) {
     e.preventDefault();
-    setDropKey(null);
-    setDropChipKey(null);
     const key = e.dataTransfer.getData(TASK_MIME) || draggingKey.current;
-    draggingKey.current = null;
+    const move = dragMoveRef.current;
+    clearDragUi();
     if (!key || !canEdit || pickingDeps) return;
+    const setKeys = move && move.grabbedKey === key && move.keys.length > 1 ? move.keys : null;
+    if (setKeys) {
+      const dragged = tasks.find((task) => task.key === key);
+      if (!dragged) return;
+      const delta = col - templateColOf(dragged.day_offset, zoom);
+      if (!delta) return;
+      const movingIds = new Set(setKeys);
+      const next = applyTimeBlockShift({
+        items: tasks,
+        movingIds,
+        idOf: (task) => task.key,
+        deptOf: (task) => task.department_id,
+        columnOf: (task) => templateColOf(task.day_offset, zoom),
+        shift: (task) => ({
+          ...task,
+          day_offset: templateDropOffset(task.day_offset, templateColOf(task.day_offset, zoom) + delta, zoom),
+        }),
+      });
+      setTasks(next);
+      await persist(name, next);
+      return;
+    }
     if (beforeKey && beforeKey === key) return;
     const dragged = tasks.find((task) => task.key === key);
     if (!dragged) return;
@@ -458,8 +511,21 @@ export default function PlanTemplatePage() {
     () => tasks.reduce((max, task) => Math.max(max, templateColOf(task.day_offset, zoom)), 0),
     [tasks, zoom],
   );
-  const paintedKeys = useMemo(() => paintedKeysFromCells(tasksByCell), [tasksByCell]);
   const hiddenConnected = connected ? hiddenConnectedCount(connected, paintedKeys) : 0;
+  const destDropKeys = useMemo(() => {
+    if (!dragMove || dragMove.keys.length < 2 || hoverCol == null) return null;
+    const grabbed = tasks.find((task) => task.key === dragMove.grabbedKey);
+    if (!grabbed) return null;
+    const delta = hoverCol - templateColOf(grabbed.day_offset, zoom);
+    const keys = new Set<string>();
+    for (const key of dragMove.keys) {
+      const task = tasks.find((row) => row.key === key);
+      if (!task) continue;
+      const dest = templateColOf(task.day_offset, zoom) + delta;
+      keys.add(`${task.department_id || "none"}|${Math.max(0, dest)}`);
+    }
+    return keys;
+  }, [dragMove, hoverCol, tasks, zoom]);
   const spanOffset = useMemo(() => {
     let max = 0;
     for (const task of tasks) {
@@ -585,8 +651,9 @@ export default function PlanTemplatePage() {
         ) : (
           <div
             ref={gridWrapRef}
-            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}`}
+            className={`plan-grid-wrap${pickingDeps ? " picking-deps" : ""}${connected ? " showing-connected" : ""}${selection.selecting ? " plan-selecting" : ""}`}
             onClick={(e) => {
+              if (selection.onWrapClick(e)) return;
               if (connected) connectedGridClick(e, hideConnected);
             }}
           >
@@ -621,12 +688,19 @@ export default function PlanTemplatePage() {
                     const cellTasks = tasksByCell.get(key) || [];
                     return (
                       <div
-                        className={`plan-cell${dropKey === key ? " drag-over" : ""}`}
+                        className={`plan-cell${destDropKeys?.has(key) || (dropKey === key && !destDropKeys) ? " drag-over" : ""}`}
                         key={key}
+                        onPointerDown={(e) => selection.onCellPointerDown(e)}
                         onDragOver={(e) => {
                           if (!canEdit || pickingDeps) return;
                           e.preventDefault();
                           e.dataTransfer.dropEffect = "move";
+                          setHoverCol(col);
+                          if (dragMoveRef.current && dragMoveRef.current.keys.length > 1) {
+                            setDropKey(null);
+                            setDropChipKey(null);
+                            return;
+                          }
                           setDropKey(key);
                           setDropChipKey(null);
                         }}
@@ -640,21 +714,25 @@ export default function PlanTemplatePage() {
                           <button
                             key={task.key}
                             type="button"
-                            className={`plan-chip${task.predecessor_keys.length ? " blocked" : ""}${pickingDeps && isPickedDep(task) ? " dep-picked" : ""}${pickingDeps && task.key === editingTaskKey() ? " dep-source" : ""}${dropChipKey === task.key ? " drop-before" : ""}${connectedChipClass(task.key, connected)}`}
+                            data-plan-chip-id={task.key}
+                            className={`plan-chip${task.predecessor_keys.length ? " blocked" : ""}${selection.isSelected(task.key) ? " selected" : ""}${pickingDeps && isPickedDep(task) ? " dep-picked" : ""}${pickingDeps && task.key === editingTaskKey() ? " dep-source" : ""}${dropChipKey === task.key ? " drop-before" : ""}${connectedChipClass(task.key, connected)}`}
                             style={{ background: `color-mix(in srgb, ${dept.color} 28%, var(--bg-card))` }}
                             draggable={canEdit && !pickingDeps}
+                            onPointerDown={(e) => selection.onChipPointerDown(e)}
                             onDragStart={(e) => onTaskDragStart(e, task)}
-                            onDragEnd={() => {
-                              draggingKey.current = null;
-                              setDropKey(null);
-                              setDropChipKey(null);
-                            }}
+                            onDragEnd={() => clearDragUi()}
                             onDragOver={(e) => {
                               if (!canEdit || pickingDeps) return;
                               if (draggingKey.current === task.key) return;
                               e.preventDefault();
                               e.stopPropagation();
                               e.dataTransfer.dropEffect = "move";
+                              setHoverCol(col);
+                              if (dragMoveRef.current && dragMoveRef.current.keys.length > 1) {
+                                setDropChipKey(null);
+                                setDropKey(null);
+                                return;
+                              }
                               setDropChipKey(task.key);
                               setDropKey(null);
                             }}
@@ -667,7 +745,10 @@ export default function PlanTemplatePage() {
                               e.stopPropagation();
                               void onCellDrop(e, deptId, col, task.key);
                             }}
-                            onClick={() => openEdit(task)}
+                            onClick={(e) => {
+                              const next = selection.onChipClick(e, task.key);
+                              if (next.open) openEdit(task);
+                            }}
                             onContextMenu={(e) => onTaskContextMenu(e, task)}
                           >
                             <span className="plan-chip-title">{task.title || "Untitled"}</span>
@@ -687,6 +768,17 @@ export default function PlanTemplatePage() {
                 ];
               })}
             </div>
+            {selection.marquee ? (
+              <div
+                className="plan-marquee"
+                style={{
+                  left: selection.marquee.left,
+                  top: selection.marquee.top,
+                  width: selection.marquee.right - selection.marquee.left,
+                  height: selection.marquee.bottom - selection.marquee.top,
+                }}
+              />
+            ) : null}
           </div>
         )}
 
